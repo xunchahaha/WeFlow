@@ -44,21 +44,31 @@ jobs:
         uses: mikepenz/release-changelog-builder-action@v4
         with:
           outputFile: "release-notes.md"
+          template: |
+            # ${{ github.ref_name }} 更新日志
+
+            {{CHANGELOG}}
+
+            ---
+            > 此更新由系统自动构建
           configurationJson: |
             {
-              "template": "# v${{ github.ref_name }} 更新日志\n\n{{CHANGELOG}}\n\n---\n> 此更新由系统自动构建",
               "categories": [
                 {
-                  "title": "## 新功能",
+                  "title": "##  新功能",
                   "filter": { "pattern": "^feat.*:.*", "flags": "i" }
                 },
                 {
-                  "title": "## 修复",
+                  "title": "##  修复",
                   "filter": { "pattern": "^fix.*:.*", "flags": "i" }
                 },
                 {
-                  "title": "## 性能与维护",
+                  "title": "##  性能与维护",
                   "filter": { "pattern": "^(chore|docs|perf|refactor|ci|style|test).*:.*", "flags": "i" }
+                },
+                {
+                  "title": "##  其他改动",
+                  "filter": { "pattern": ".*", "flags": "i" }
                 }
               ],
               "ignore_labels": [],
@@ -71,9 +81,9 @@ jobs:
       - name: Check Changelog Content
         shell: bash
         run: |
-          echo "=== RELEASE NOTES CONTENT START ==="
+          echo "=== RELEASE NOTES START ==="
           cat release-notes.md
-          echo "=== RELEASE NOTES CONTENT END ==="
+          echo "=== RELEASE NOTES END ==="
 
       - name: Inject Configuration
         shell: bash
