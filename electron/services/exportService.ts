@@ -348,6 +348,9 @@ class ExportService {
         this.extractXmlValue(normalized, 'name')
       return location ? `[定位]${location}` : '[定位]'
     }
+    if (localType === 50) {
+      return this.parseVoipMessage(safeContent)
+    }
     if (localType === 10000 || localType === 266287972401) {
       return this.cleanSystemMessage(safeContent)
     }
@@ -667,31 +670,15 @@ class ExportService {
   private formatHtmlMessageText(content: string, localType: number): string {
     if (!content) return ''
 
-    const normalized = this.normalizeAppMessageContent(content)
-    const isAppMessage = normalized.includes('<appmsg') || normalized.includes('<msg>')
-
-    if (localType === 49 || isAppMessage) {
-      const typeMatch = /<type>(\d+)<\/type>/i.exec(normalized)
-      const subType = typeMatch ? parseInt(typeMatch[1], 10) : 0
-      const title = this.extractXmlValue(normalized, 'title') || this.extractXmlValue(normalized, 'appname')
-      if (subType === 6) {
-        const fileName = this.extractXmlValue(normalized, 'filename') || title || '文件'
-        return `[文件] ${fileName}`.trim()
-      }
-      if (subType === 33 || subType === 36) {
-        const appName = this.extractXmlValue(normalized, 'appname')
-        const miniTitle = title || appName || '小程序'
-        return `[小程序] ${miniTitle}`.trim()
-      }
-      return title || '[链接]'
+    if (localType === 1) {
+      return this.stripSenderPrefix(content)
     }
 
-    if (localType === 42) {
-      const nickname = this.extractXmlValue(normalized, 'nickname')
-      return nickname ? `[名片] ${nickname}` : '[名片]'
+    if (localType === 34) {
+      return this.parseMessageContent(content, localType) || ''
     }
 
-    return this.parseMessageContent(content, localType) || ''
+    return this.formatPlainExportContent(content, localType, { exportVoiceAsText: false })
   }
 
   /**
@@ -2501,7 +2488,7 @@ class ExportService {
         if (msg.localType === 34 && useVoiceTranscript) {
           textContent = voiceTranscriptMap.get(msg.localId) || '[语音消息 - 转文字失败]'
         }
-        if (mediaItem && (msg.localType === 3 || msg.localType === 43 || msg.localType === 47)) {
+        if (mediaItem && (msg.localType === 3 || msg.localType === 47)) {
           textContent = ''
         }
 
