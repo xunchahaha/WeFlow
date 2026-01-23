@@ -34,6 +34,14 @@ export class ContactCacheService {
       const raw = readFileSync(this.cacheFilePath, 'utf8')
       const parsed = JSON.parse(raw)
       if (parsed && typeof parsed === 'object') {
+        // 清除无效的头像数据（hex 格式而非正确的 base64）
+        for (const key of Object.keys(parsed)) {
+          const entry = parsed[key]
+          if (entry?.avatarUrl && entry.avatarUrl.includes('base64,ffd8')) {
+            // 这是错误的 hex 格式，清除它
+            entry.avatarUrl = undefined
+          }
+        }
         this.cache = parsed
       }
     } catch (error) {

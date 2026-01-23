@@ -326,7 +326,11 @@ class ChatService {
       // 检查缓存
       for (const username of usernames) {
         const cached = this.avatarCache.get(username)
-        if (cached && now - cached.updatedAt < this.avatarCacheTtlMs) {
+        // 如果缓存有效且有头像，直接使用；如果没有头像，也需要重新尝试获取
+        // 额外检查：如果头像是无效的 hex 格式（以 ffd8 开头），也需要重新获取
+        const isValidAvatar = cached?.avatarUrl && 
+          !cached.avatarUrl.includes('base64,ffd8') // 检测错误的 hex 格式
+        if (cached && now - cached.updatedAt < this.avatarCacheTtlMs && isValidAvatar) {
           result[username] = {
             displayName: cached.displayName,
             avatarUrl: cached.avatarUrl
@@ -403,22 +407,16 @@ class ChatService {
     try {
       const dbPath = this.configService.get('dbPath')
       const wxid = this.configService.get('myWxid')
-      if (!dbPath || !wxid) {
-        console.log('[头像加载] 配置缺失，无法加载头像', { dbPath: !!dbPath, wxid: !!wxid })
-        return result
-      }
+      if (!dbPath || !wxid) return result
 
-      // 使用 resolveAccountDir 获取正确的账号目录
       const accountDir = this.resolveAccountDir(dbPath, wxid)
-      if (!accountDir) {
-        console.log('[头像加载] 无法解析账号目录', { dbPath, wxid })
-        return result
-      }
+      if (!accountDir) return result
 
-      // head_image.db 可能在账号目录下或 db_storage 子目录下
+      // head_image.db 可能在不同位置
       const headImageDbPaths = [
-        join(accountDir, 'head_image.db'),
-        join(accountDir, 'db_storage', 'head_image.db')
+        join(accountDir, 'db_storage', 'head_image', 'head_image.db'),
+        join(accountDir, 'db_storage', 'head_image.db'),
+        join(accountDir, 'head_image.db')
       ]
 
       let headImageDbPath: string | null = null
@@ -429,42 +427,43 @@ class ChatService {
         }
       }
 
-      if (!headImageDbPath) {
-        console.log('[头像加载] 未找到 head_image.db', {
-          accountDir,
-          checkedPaths: headImageDbPaths
-        })
-        return result
-      }
+      if (!headImageDbPath) return result
 
-      console.log(`[头像加载] 使用数据库: ${headImageDbPath}，查询 ${usernames.length} 个用户`)
+      // 使用 wcdbService.execQuery 查询加密的 head_image.db
+      for (const username of usernames) {
+        try {
+          const escapedUsername = username.replace(/'/g, "''")
+          const queryResult = await wcdbService.execQuery(
+            'media',
+            headImageDbPath,
+            `SELECT image_buffer FROM head_image WHERE username = '${escapedUsername}' LIMIT 1`
+          )
 
-      const Database = require('better-sqlite3')
-      const db = new Database(headImageDbPath, { readonly: true })
-
-      try {
-        const stmt = db.prepare('SELECT username, image_buffer FROM head_image WHERE username = ?')
-
-        for (const username of usernames) {
-          try {
-            const row = stmt.get(username) as any
-            if (row && row.image_buffer) {
-              const buffer = Buffer.from(row.image_buffer)
-              const base64 = buffer.toString('base64')
-              result[username] = `data:image/jpeg;base64,${base64}`
-            } else {
-              // 只输出没有找到头像的
-              console.log(`[头像加载] 未找到头像: ${username}`, {
-                hasRow: !!row,
-                hasBuffer: row ? !!row.image_buffer : false
-              })
+          if (queryResult.success && queryResult.rows && queryResult.rows.length > 0) {
+            const row = queryResult.rows[0] as any
+            if (row?.image_buffer) {
+              let base64Data: string
+              if (typeof row.image_buffer === 'string') {
+                // WCDB 返回的 BLOB 是十六进制字符串，需要转换为 base64
+                if (row.image_buffer.toLowerCase().startsWith('ffd8')) {
+                  const buffer = Buffer.from(row.image_buffer, 'hex')
+                  base64Data = buffer.toString('base64')
+                } else {
+                  base64Data = row.image_buffer
+                }
+              } else if (Buffer.isBuffer(row.image_buffer)) {
+                base64Data = row.image_buffer.toString('base64')
+              } else if (Array.isArray(row.image_buffer)) {
+                base64Data = Buffer.from(row.image_buffer).toString('base64')
+              } else {
+                continue
+              }
+              result[username] = `data:image/jpeg;base64,${base64Data}`
             }
-          } catch (e) {
-            console.error(`[头像加载] 查询失败: ${username}`, e)
           }
+        } catch {
+          // 静默处理单个用户的错误
         }
-      } finally {
-        db.close()
       }
     } catch (e) {
       console.error('从 head_image.db 获取头像失败:', e)
@@ -1824,7 +1823,9 @@ class ChatService {
       const connectResult = await this.ensureConnected()
       if (!connectResult.success) return null
       const cached = this.avatarCache.get(username)
-      if (cached && cached.avatarUrl && Date.now() - cached.updatedAt < this.avatarCacheTtlMs) {
+      // 检查缓存是否有效，且头像不是错误的 hex 格式
+      const isValidAvatar = cached?.avatarUrl && !cached.avatarUrl.includes('base64,ffd8')
+      if (cached && isValidAvatar && Date.now() - cached.updatedAt < this.avatarCacheTtlMs) {
         return { avatarUrl: cached.avatarUrl, displayName: cached.displayName }
       }
 
@@ -3097,10 +3098,26 @@ class ChatService {
 
   private resolveAccountDir(dbPath: string, wxid: string): string | null {
     const normalized = dbPath.replace(/[\\\\/]+$/, '')
+    
+    // 如果 dbPath 本身指向 db_storage 目录下的文件（如某个 .db 文件）
+    // 则向上回溯到账号目录
+    if (basename(normalized).toLowerCase() === 'db_storage') {
+      return dirname(normalized)
+    }
     const dir = dirname(normalized)
-    if (basename(normalized).toLowerCase() === 'db_storage') return dir
-    if (basename(dir).toLowerCase() === 'db_storage') return dirname(dir)
-    return dir // 兜底
+    if (basename(dir).toLowerCase() === 'db_storage') {
+      return dirname(dir)
+    }
+    
+    // 否则，dbPath 应该是数据库根目录（如 xwechat_files）
+    // 账号目录应该是 {dbPath}/{wxid}
+    const accountDirWithWxid = join(normalized, wxid)
+    if (existsSync(accountDirWithWxid)) {
+      return accountDirWithWxid
+    }
+    
+    // 兜底：返回 dbPath 本身（可能 dbPath 已经是账号目录）
+    return normalized
   }
 
   private async findDatFile(accountDir: string, baseName: string, sessionId?: string): Promise<string | null> {
