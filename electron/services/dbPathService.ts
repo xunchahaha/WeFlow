@@ -18,8 +18,7 @@ export class DbPathService {
 
       // 微信4.x 数据目录
       possiblePaths.push(join(home, 'Documents', 'xwechat_files'))
-      // 旧版微信数据目录
-      possiblePaths.push(join(home, 'Documents', 'WeChat Files'))
+
 
       for (const path of possiblePaths) {
         if (existsSync(path)) {
@@ -27,7 +26,7 @@ export class DbPathService {
           if (rootName !== 'xwechat_files' && rootName !== 'wechat files') {
             continue
           }
-          
+
           // 检查是否有有效的账号目录
           const accounts = this.findAccountDirs(path)
           if (accounts.length > 0) {
@@ -47,10 +46,10 @@ export class DbPathService {
    */
   findAccountDirs(rootPath: string): string[] {
     const accounts: string[] = []
-    
+
     try {
       const entries = readdirSync(rootPath)
-      
+
       for (const entry of entries) {
         const entryPath = join(rootPath, entry)
         let stat: ReturnType<typeof statSync>
@@ -59,7 +58,7 @@ export class DbPathService {
         } catch {
           continue
         }
-        
+
         if (stat.isDirectory()) {
           if (!this.isPotentialAccountName(entry)) continue
 
@@ -69,8 +68,8 @@ export class DbPathService {
           }
         }
       }
-    } catch {}
-    
+    } catch { }
+
     return accounts
   }
 
@@ -124,7 +123,7 @@ export class DbPathService {
    */
   scanWxids(rootPath: string): WxidInfo[] {
     const wxids: WxidInfo[] = []
-    
+
     try {
       if (this.isAccountDir(rootPath)) {
         const wxid = basename(rootPath)
@@ -133,14 +132,14 @@ export class DbPathService {
       }
 
       const accounts = this.findAccountDirs(rootPath)
-      
+
       for (const account of accounts) {
         const fullPath = join(rootPath, account)
         const modifiedTime = this.getAccountModifiedTime(fullPath)
         wxids.push({ wxid: account, modifiedTime })
       }
-    } catch {}
-    
+    } catch { }
+
     return wxids.sort((a, b) => {
       if (b.modifiedTime !== a.modifiedTime) return b.modifiedTime - a.modifiedTime
       return a.wxid.localeCompare(b.wxid)
