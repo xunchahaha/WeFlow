@@ -20,9 +20,6 @@ WeFlow 是一个**完全本地**的微信**实时**聊天记录查看、分析�
 <a href="https://github.com/hicccc77/WeFlow/issues">
 <img src="https://img.shields.io/github/issues/hicccc77/WeFlow?style=flat-square" alt="Issues">
 </a>
-<a href="https://t.me/+hn3QzNc4DbA0MzNl">
-<img src="https://img.shields.io/badge/Telegram%20交流群-点击加入-0088cc?style=flat-square&logo=telegram&logoColor=0088cc&labelColor=white" alt="Telegram">
-</a>
 </p>
 
 
@@ -31,15 +28,6 @@ WeFlow 是一个**完全本地**的微信**实时**聊天记录查看、分析�
 
 > [!NOTE]
 > 仅支持微信 **4.0 及以上**版本，确保你的微信版本符合要求
-
-
-# 加入微信交流群
-
-> 🎉 扫码加入微信群，与其他 WeFlow 用户一起交流问题和使用心得。
-
-<p align="center">
-  <img src="mdassets/us.png" alt="WeFlow 微信交流群二维码" width="220" style="margin-right: 16px;"
-</p>
 
 ## 主要功能
 
