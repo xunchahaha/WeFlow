@@ -2510,4 +2510,65 @@
       color: white;
     }
   }
+
+  .announcement-message {
+    background: rgba(255, 255, 255, 0.15);
+    
+    .announcement-label {
+      color: rgba(255, 255, 255, 0.8);
+    }
+    
+    .announcement-text {
+      color: white;
+    }
+    
+    .announcement-icon {
+      color: white;
+    }
+  }
+}
+
+// 群公告消息
+.announcement-message {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 12px 14px;
+  background: var(--hover-color);
+  border-radius: 12px;
+  max-width: 320px;
+  
+  .announcement-icon {
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #f59e42;
+    
+    svg {
+      width: 20px;
+      height: 20px;
+    }
+  }
+  
+  .announcement-content {
+    flex: 1;
+    min-width: 0;
+    
+    .announcement-label {
+      font-size: 12px;
+      color: var(--text-tertiary);
+      margin-bottom: 4px;
+    }
+    
+    .announcement-text {
+      font-size: 14px;
+      color: var(--text-primary);
+      line-height: 1.5;
+      word-break: break-word;
+      white-space: pre-wrap;
+    }
+  }
 }

@@ -413,6 +413,15 @@ class ExportService {
         if (xmlType) {
           const title = this.extractXmlValue(content, 'title')
           
+          // 群公告消息（type 87）
+          if (xmlType === '87') {
+            const textAnnouncement = this.extractXmlValue(content, 'textannouncement')
+            if (textAnnouncement) {
+              return `[群公告] ${textAnnouncement}`
+            }
+            return '[群公告]'
+          }
+          
           // 转账消息
           if (xmlType === '2000') {
             const feedesc = this.extractXmlValue(content, 'feedesc')
@@ -495,6 +504,15 @@ class ExportService {
       const typeMatch = /<type>(\d+)<\/type>/i.exec(normalized)
       const subType = typeMatch ? parseInt(typeMatch[1], 10) : 0
       const title = this.extractXmlValue(normalized, 'title') || this.extractXmlValue(normalized, 'appname')
+      
+      // 群公告消息（type 87）
+      if (subType === 87) {
+        const textAnnouncement = this.extractXmlValue(normalized, 'textannouncement')
+        if (textAnnouncement) {
+          return `[群公告]${textAnnouncement}`
+        }
+        return '[群公告]'
+      }
       
       // 转账消息特殊处理
       if (subType === 2000 || title.includes('转账') || normalized.includes('transfer')) {
@@ -686,6 +704,7 @@ class ExportService {
       
       if (xmlType) {
         switch (xmlType) {
+          case '87': return '群公告'
           case '2000': return '转账消息'
           case '5': return '链接消息'
           case '6': return '文件消息'

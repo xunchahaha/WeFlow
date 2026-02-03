@@ -2622,6 +2622,7 @@ function MessageBubble({ message, session, showTime, myAvatarUrl, isGroupChat, o
       let desc = ''
       let url = ''
       let appMsgType = ''
+      let textAnnouncement = ''
 
       try {
         const content = message.rawContent || message.parsedContent || ''
@@ -2635,8 +2636,27 @@ function MessageBubble({ message, session, showTime, myAvatarUrl, isGroupChat, o
         desc = doc.querySelector('des')?.textContent || ''
         url = doc.querySelector('url')?.textContent || ''
         appMsgType = doc.querySelector('appmsg > type')?.textContent || doc.querySelector('type')?.textContent || ''
+        textAnnouncement = doc.querySelector('textannouncement')?.textContent || ''
       } catch (e) {
         console.error('解析 AppMsg 失败:', e)
+      }
+
+      // 群公告消息 (type=87)
+      if (appMsgType === '87') {
+        const announcementText = textAnnouncement || desc || '群公告'
+        return (
+          <div className="announcement-message">
+            <div className="announcement-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M22 17H2a3 3 0 0 0 3-3V9a7 7 0 0 1 14 0v5a3 3 0 0 0 3 3zm-8.27 4a2 2 0 0 1-3.46 0" />
+              </svg>
+            </div>
+            <div className="announcement-content">
+              <div className="announcement-label">群公告</div>
+              <div className="announcement-text">{announcementText}</div>
+            </div>
+          </div>
+        )
       }
 
       // 聊天记录 (type=19)

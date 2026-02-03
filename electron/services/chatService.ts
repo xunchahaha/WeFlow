@@ -1268,6 +1268,15 @@ class ChatService {
       case 8589934592049:
         return '[转账]'
       default:
+        // 检查是否是 type=87 的群公告消息
+        if (xmlType === '87') {
+          const textAnnouncement = this.extractXmlValue(content, 'textannouncement')
+          if (textAnnouncement) {
+            return `[群公告] ${textAnnouncement}`
+          }
+          return '[群公告]'
+        }
+
         // 检查是否是 type=57 的引用消息
         if (xmlType === '57') {
           const title = this.extractXmlValue(content, 'title')
@@ -1290,6 +1299,15 @@ class ChatService {
   private parseType49(content: string): string {
     const title = this.extractXmlValue(content, 'title')
     const type = this.extractXmlValue(content, 'type')
+
+    // 群公告消息（type 87）特殊处理
+    if (type === '87') {
+      const textAnnouncement = this.extractXmlValue(content, 'textannouncement')
+      if (textAnnouncement) {
+        return `[群公告] ${textAnnouncement}`
+      }
+      return '[群公告]'
+    }
 
     if (title) {
       switch (type) {
@@ -1324,6 +1342,8 @@ class ChatService {
         return '[小程序]'
       case '2000':
         return '[转账]'
+      case '87':
+        return '[群公告]'
       default:
         return '[消息]'
     }
