@@ -46,13 +46,22 @@ function ExportPage() {
   const [searchKeyword, setSearchKeyword] = useState('')
   const [exportFolder, setExportFolder] = useState<string>('')
   const [isExporting, setIsExporting] = useState(false)
-  const [exportProgress, setExportProgress] = useState({ current: 0, total: 0, currentName: '' })
+  const [exportProgress, setExportProgress] = useState({ current: 0, total: 0, currentName: '', phaseLabel: '', phaseProgress: 0, phaseTotal: 0 })
   const [exportResult, setExportResult] = useState<ExportResult | null>(null)
   const [showDatePicker, setShowDatePicker] = useState(false)
   const [calendarDate, setCalendarDate] = useState(new Date())
   const [selectingStart, setSelectingStart] = useState(true)
   const [showMediaLayoutPrompt, setShowMediaLayoutPrompt] = useState(false)
   const [showDisplayNameSelect, setShowDisplayNameSelect] = useState(false)
+  const [showPreExportDialog, setShowPreExportDialog] = useState(false)
+  const [preExportStats, setPreExportStats] = useState<{
+    totalMessages: number; voiceMessages: number; cachedVoiceCount: number;
+    needTranscribeCount: number; mediaMessages: number; estimatedSeconds: number
+  } | null>(null)
+  const [isLoadingStats, setIsLoadingStats] = useState(false)
+  const [pendingLayout, setPendingLayout] = useState<SessionLayout>('shared')
+  const exportStartTime = useRef<number>(0)
+  const [elapsedSeconds, setElapsedSeconds] = useState(0)
   const displayNameDropdownRef = useRef<HTMLDivElement>(null)
 
   const [options, setOptions] = useState<ExportOptions>({
@@ -189,17 +198,30 @@ function ExportPage() {
   }, [loadSessions])
 
   useEffect(() => {
-    const removeListener = window.electronAPI.export.onProgress?.((payload: { current: number; total: number; currentSession: string; phase: string }) => {
+    const removeListener = window.electronAPI.export.onProgress?.((payload: { current: number; total: number; currentSession: string; phase: string; phaseProgress?: number; phaseTotal?: number; phaseLabel?: string }) => {
       setExportProgress({
         current: payload.current,
         total: payload.total,
-        currentName: payload.currentSession
+        currentName: payload.currentSession,
+        phaseLabel: payload.phaseLabel || '',
+        phaseProgress: payload.phaseProgress || 0,
+        phaseTotal: payload.phaseTotal || 0
       })
     })
     return () => {
       removeListener?.()
     }
   }, [])
+
+  // 导出计时器
+  useEffect(() => {
+    if (!isExporting) return
+    const timer = setInterval(() => {
+      setElapsedSeconds(Math.floor((Date.now() - exportStartTime.current) / 1000))
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [isExporting])
+
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       const target = event.target as Node
@@ -278,8 +300,10 @@ function ExportPage() {
     if (selectedSessions.size === 0 || !exportFolder) return
 
     setIsExporting(true)
-    setExportProgress({ current: 0, total: selectedSessions.size, currentName: '' })
+    setExportProgress({ current: 0, total: selectedSessions.size, currentName: '', phaseLabel: '', phaseProgress: 0, phaseTotal: 0 })
     setExportResult(null)
+    exportStartTime.current = Date.now()
+    setElapsedSeconds(0)
 
     try {
       const sessionList = Array.from(selectedSessions)
@@ -322,8 +346,40 @@ function ExportPage() {
     }
   }
 
-  const startExport = () => {
+  const startExport = async () => {
     if (selectedSessions.size === 0 || !exportFolder) return
+
+    // 先获取预估统计
+    setIsLoadingStats(true)
+    setShowPreExportDialog(true)
+    try {
+      const sessionList = Array.from(selectedSessions)
+      const exportOptions = {
+        format: options.format,
+        exportVoiceAsText: options.exportVoiceAsText,
+        exportMedia: options.exportMedia,
+        exportImages: options.exportMedia && options.exportImages,
+        exportVoices: options.exportMedia && options.exportVoices,
+        exportVideos: options.exportMedia && options.exportVideos,
+        exportEmojis: options.exportMedia && options.exportEmojis,
+        dateRange: options.useAllTime ? null : options.dateRange ? {
+          start: Math.floor(options.dateRange.start.getTime() / 1000),
+          end: Math.floor(new Date(options.dateRange.end.getFullYear(), options.dateRange.end.getMonth(), options.dateRange.end.getDate(), 23, 59, 59).getTime() / 1000)
+        } : null
+      }
+      const stats = await window.electronAPI.export.getExportStats(sessionList, exportOptions)
+      setPreExportStats(stats)
+    } catch (e) {
+      console.error('获取导出统计失败:', e)
+      setPreExportStats(null)
+    } finally {
+      setIsLoadingStats(false)
+    }
+  }
+
+  const confirmExport = () => {
+    setShowPreExportDialog(false)
+    setPreExportStats(null)
 
     if (options.exportMedia && selectedSessions.size > 1) {
       setShowMediaLayoutPrompt(true)
@@ -814,6 +870,71 @@ function ExportPage() {
         </div>
       )}
 
+      {/* 导出前预估弹窗 */}
+      {showPreExportDialog && (
+        <div className="export-overlay">
+          <div className="export-layout-modal" onClick={e => e.stopPropagation()}>
+            <h3>导出预估</h3>
+            {isLoadingStats ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '24px 0', justifyContent: 'center' }}>
+                <Loader2 size={20} className="spin" />
+                <span style={{ fontSize: 14, color: 'var(--text-secondary)' }}>正在统计消息...</span>
+              </div>
+            ) : preExportStats ? (
+              <div style={{ padding: '12px 0' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 24px', fontSize: 14 }}>
+                  <div>
+                    <span style={{ color: 'var(--text-secondary)' }}>会话数</span>
+                    <div style={{ fontWeight: 600, fontSize: 18, marginTop: 2 }}>{selectedSessions.size}</div>
+                  </div>
+                  <div>
+                    <span style={{ color: 'var(--text-secondary)' }}>总消息</span>
+                    <div style={{ fontWeight: 600, fontSize: 18, marginTop: 2 }}>{preExportStats.totalMessages.toLocaleString()}</div>
+                  </div>
+                  {options.exportVoiceAsText && preExportStats.voiceMessages > 0 && (
+                    <>
+                      <div>
+                        <span style={{ color: 'var(--text-secondary)' }}>语音消息</span>
+                        <div style={{ fontWeight: 600, fontSize: 18, marginTop: 2 }}>{preExportStats.voiceMessages}</div>
+                      </div>
+                      <div>
+                        <span style={{ color: 'var(--text-secondary)' }}>已有缓存</span>
+                        <div style={{ fontWeight: 600, fontSize: 18, marginTop: 2, color: 'var(--primary)' }}>{preExportStats.cachedVoiceCount}</div>
+                      </div>
+                    </>
+                  )}
+                </div>
+                {options.exportVoiceAsText && preExportStats.needTranscribeCount > 0 && (
+                  <div style={{ marginTop: 16, padding: '10px 12px', background: 'var(--bg-tertiary)', borderRadius: 8, fontSize: 13 }}>
+                    <span style={{ color: 'var(--text-warning, #e6a23c)' }}>⚠</span>
+                    {' '}需要转写 <b>{preExportStats.needTranscribeCount}</b> 条语音，预计耗时约 <b>{preExportStats.estimatedSeconds > 60
+                      ? `${Math.round(preExportStats.estimatedSeconds / 60)} 分钟`
+                      : `${preExportStats.estimatedSeconds} 秒`
+                    }</b>
+                  </div>
+                )}
+                {options.exportVoiceAsText && preExportStats.voiceMessages > 0 && preExportStats.needTranscribeCount === 0 && (
+                  <div style={{ marginTop: 16, padding: '10px 12px', background: 'var(--bg-tertiary)', borderRadius: 8, fontSize: 13 }}>
+                    <span style={{ color: 'var(--text-success, #67c23a)' }}>✓</span>
+                    {' '}所有 {preExportStats.voiceMessages} 条语音已有转写缓存，无需重新转写
+                  </div>
+                )}
+              </div>
+            ) : (
+              <p style={{ fontSize: 14, color: 'var(--text-secondary)', padding: '16px 0' }}>统计信息获取失败，仍可继续导出</p>
+            )}
+            <div className="layout-actions" style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
+              <button className="layout-cancel-btn" onClick={() => { setShowPreExportDialog(false); setPreExportStats(null) }}>
+                取消
+              </button>
+              <button className="layout-option-btn primary" onClick={confirmExport} disabled={isLoadingStats}>
+                <span className="layout-title">开始导出</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 导出进度弹窗 */}
       {isExporting && (
         <div className="export-overlay">
@@ -823,13 +944,31 @@ function ExportPage() {
             </div>
             <h3>正在导出</h3>
             <p className="progress-text">{exportProgress.currentName}</p>
+            {exportProgress.phaseLabel && (
+              <p className="progress-phase-label" style={{ fontSize: 13, color: 'var(--text-secondary)', margin: '4px 0 8px' }}>
+                {exportProgress.phaseLabel}
+              </p>
+            )}
+            {exportProgress.phaseTotal > 0 && (
+              <div className="progress-bar" style={{ marginBottom: 8 }}>
+                <div
+                  className="progress-fill"
+                  style={{ width: `${(exportProgress.phaseProgress / exportProgress.phaseTotal) * 100}%`, background: 'var(--primary-light, #79bbff)' }}
+                />
+              </div>
+            )}
             <div className="progress-bar">
               <div
                 className="progress-fill"
-                style={{ width: `${(exportProgress.current / exportProgress.total) * 100}%` }}
+                style={{ width: `${exportProgress.total > 0 ? (exportProgress.current / exportProgress.total) * 100 : 0}%` }}
               />
             </div>
-            <p className="progress-count">{exportProgress.current} / {exportProgress.total}</p>
+            <p className="progress-count">
+              {exportProgress.current} / {exportProgress.total} 个会话
+              <span style={{ marginLeft: 12, fontSize: 12, color: 'var(--text-secondary)' }}>
+                {elapsedSeconds > 0 && `已用 ${elapsedSeconds >= 60 ? `${Math.floor(elapsedSeconds / 60)}分${elapsedSeconds % 60}秒` : `${elapsedSeconds}秒`}`}
+              </span>
+            </p>
           </div>
         </div>
       )}
