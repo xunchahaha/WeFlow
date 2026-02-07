@@ -18,6 +18,7 @@ export class WcdbCore {
   private currentPath: string | null = null
   private currentKey: string | null = null
   private currentWxid: string | null = null
+  private currentContactDbPath: string | null = null
 
   // 函数引用
   private wcdbInitProtection: any = null
@@ -281,6 +282,104 @@ export class WcdbCore {
       } catch { }
     }
     return null
+  }
+
+  private escapeSqlLiteral(value: string): string {
+    return String(value || '').replace(/'/g, "''")
+  }
+
+  private findPreferredContactDb(dbStoragePath: string): string | null {
+    if (!dbStoragePath || !existsSync(dbStoragePath)) return null
+
+    const direct = join(dbStoragePath, 'Contact', 'contact.db')
+    try {
+      if (existsSync(direct) && statSync(direct).isFile()) {
+        return direct
+      }
+    } catch { }
+
+    const candidates: string[] = []
+    const scan = (dir: string, depth: number) => {
+      if (depth > 5) return
+      let entries: string[] = []
+      try {
+        entries = readdirSync(dir)
+      } catch {
+        return
+      }
+
+      for (const entry of entries) {
+        const fullPath = join(dir, entry)
+        let isDir = false
+        let isFile = false
+        try {
+          const st = statSync(fullPath)
+          isDir = st.isDirectory()
+          isFile = st.isFile()
+        } catch {
+          continue
+        }
+
+        if (isDir) {
+          scan(fullPath, depth + 1)
+          continue
+        }
+        if (!isFile) continue
+
+        const lower = entry.toLowerCase()
+        if (!lower.endsWith('.db')) continue
+        if (!lower.includes('contact')) continue
+        if (lower.includes('fts')) continue
+        candidates.push(fullPath)
+      }
+    }
+    scan(dbStoragePath, 0)
+
+    if (candidates.length === 0) return null
+
+    candidates.sort((a, b) => {
+      const aName = basename(a).toLowerCase()
+      const bName = basename(b).toLowerCase()
+      const aDir = dirname(a).toLowerCase()
+      const bDir = dirname(b).toLowerCase()
+      const aScore = (aName === 'contact.db' ? 100 : 0) + (aDir.includes('\\contact') || aDir.endsWith('/contact') ? 20 : 0)
+      const bScore = (bName === 'contact.db' ? 100 : 0) + (bDir.includes('\\contact') || bDir.endsWith('/contact') ? 20 : 0)
+      if (aScore !== bScore) return bScore - aScore
+      return a.localeCompare(b)
+    })
+
+    return candidates[0] || null
+  }
+
+  private async queryContactsByUsernames(usernames: string[]): Promise<Record<string, any>> {
+    const out: Record<string, any> = {}
+    const contactDbPath = this.currentContactDbPath
+    if (!contactDbPath || usernames.length === 0) return out
+
+    const unique = Array.from(new Set(usernames.filter(Boolean)))
+    if (unique.length === 0) return out
+
+    const chunkSize = 200
+    for (let i = 0; i < unique.length; i += chunkSize) {
+      const chunk = unique.slice(i, i + chunkSize)
+      const inClause = chunk.map((u) => `'${this.escapeSqlLiteral(u)}'`).join(',')
+      let sql = `SELECT username, remark, alias, nick_name FROM contact WHERE username IN (${inClause})`
+      let result = await this.execQuery('contact', contactDbPath, sql)
+
+      if (!result.success || !Array.isArray(result.rows)) {
+        sql = `SELECT username, remark, alias, nickname AS nick_name FROM contact WHERE username IN (${inClause})`
+        result = await this.execQuery('contact', contactDbPath, sql)
+      }
+
+      if (!result.success || !Array.isArray(result.rows)) continue
+      for (const row of result.rows as Record<string, any>[]) {
+        const username = String(row.username || '')
+        if (!username) continue
+        out[username] = row
+      }
+    }
+
+    return out
   }
 
   /**
@@ -647,6 +746,7 @@ export class WcdbCore {
         this.currentPath = null
         this.currentKey = null
         this.currentWxid = null
+        this.currentContactDbPath = null
         this.initialized = false
       } catch (closeErr) {
         console.error('关闭测试数据库时出错:', closeErr)
@@ -813,6 +913,8 @@ export class WcdbCore {
       }
 
       const sessionDbPath = this.findSessionDb(dbStoragePath)
+      const contactDbPath = this.findPreferredContactDb(dbStoragePath)
+      this.writeLog(`open contactDb=${contactDbPath || 'null'}`)
       this.writeLog(`open sessionDb=${sessionDbPath || 'null'}`)
       if (!sessionDbPath) {
         console.error('未找到 session.db 文件')
@@ -839,6 +941,7 @@ export class WcdbCore {
       this.currentPath = dbPath
       this.currentKey = hexKey
       this.currentWxid = wxid
+      this.currentContactDbPath = contactDbPath
       this.initialized = true
       if (this.wcdbSetMyWxid && wxid) {
         try {
@@ -875,6 +978,7 @@ export class WcdbCore {
       this.currentPath = null
       this.currentKey = null
       this.currentWxid = null
+      this.currentContactDbPath = null
       this.initialized = false
       this.stopLogPolling()
     }
@@ -992,26 +1096,47 @@ export class WcdbCore {
 
   async getDisplayNames(usernames: string[]): Promise<{ success: boolean; map?: Record<string, string>; error?: string }> {
     if (!this.ensureReady()) {
-      return { success: false, error: 'WCDB 未连接' }
+      return { success: false, error: 'WCDB not connected' }
     }
     if (usernames.length === 0) return { success: true, map: {} }
     try {
-      // 让出控制权，避免阻塞事件循环
-      await new Promise(resolve => setImmediate(resolve))
+      let primaryError: string | null = null
+      let map: Record<string, string> = {}
 
+      await new Promise(resolve => setImmediate(resolve))
       const outPtr = [null as any]
       const result = this.wcdbGetDisplayNames(this.handle, JSON.stringify(usernames), outPtr)
-
-      // DLL 调用后再次让出控制权
       await new Promise(resolve => setImmediate(resolve))
 
       if (result !== 0 || !outPtr[0]) {
-        return { success: false, error: `获取昵称失败: ${result}` }
+        primaryError = 'getDisplayNames failed: ' + result
+      } else {
+        const jsonStr = this.decodeJsonPtr(outPtr[0])
+        if (!jsonStr) {
+          primaryError = 'parse display names failed'
+        } else {
+          const parsed = JSON.parse(jsonStr)
+          if (parsed && typeof parsed === 'object') {
+            map = parsed
+          }
+        }
       }
-      const jsonStr = this.decodeJsonPtr(outPtr[0])
-      if (!jsonStr) return { success: false, error: '解析昵称失败' }
-      const map = JSON.parse(jsonStr)
-      return { success: true, map }
+
+      const missing = usernames.filter((u) => !!u && !map[u])
+      if (missing.length > 0) {
+        const fallbackRows = await this.queryContactsByUsernames(missing)
+        for (const username of missing) {
+          const row = fallbackRows[username]
+          if (!row) continue
+          const name = row.remark || row.nick_name || row.nickname || row.alias || username
+          if (name) map[username] = String(name)
+        }
+      }
+
+      if (Object.keys(map).length === 0 && primaryError) {
+        return { success: false, error: primaryError }
+      }
+      return { success: true, map, error: primaryError || undefined }
     } catch (e) {
       return { success: false, error: String(e) }
     }
@@ -1226,18 +1351,44 @@ export class WcdbCore {
 
   async getContact(username: string): Promise<{ success: boolean; contact?: any; error?: string }> {
     if (!this.ensureReady()) {
-      return { success: false, error: 'WCDB 未连接' }
+      return { success: false, error: 'WCDB not connected' }
     }
     try {
+      let primaryError: string | null = null
+
       const outPtr = [null as any]
       const result = this.wcdbGetContact(this.handle, username, outPtr)
       if (result !== 0 || !outPtr[0]) {
-        return { success: false, error: `获取联系人失败: ${result}` }
+        primaryError = 'getContact failed: ' + result
+      } else {
+        const jsonStr = this.decodeJsonPtr(outPtr[0])
+        if (!jsonStr) {
+          primaryError = 'parse contact failed'
+        } else {
+          const contact = JSON.parse(jsonStr)
+          if (contact && typeof contact === 'object' && Object.keys(contact).length > 0) {
+            return { success: true, contact }
+          }
+          primaryError = 'empty contact payload'
+        }
       }
-      const jsonStr = this.decodeJsonPtr(outPtr[0])
-      if (!jsonStr) return { success: false, error: '解析联系人失败' }
-      const contact = JSON.parse(jsonStr)
-      return { success: true, contact }
+
+      const fallbackRows = await this.queryContactsByUsernames([username])
+      const row = fallbackRows[username]
+      if (row) {
+        return {
+          success: true,
+          contact: {
+            username: row.username || username,
+            alias: row.alias || '',
+            remark: row.remark || '',
+            nickName: row.nick_name || row.nickname || ''
+          },
+          error: primaryError || undefined
+        }
+      }
+
+      return { success: false, error: primaryError || 'getContact failed' }
     } catch (e) {
       return { success: false, error: String(e) }
     }
@@ -1527,19 +1678,37 @@ export class WcdbCore {
 
   async execQuery(kind: string, path: string | null, sql: string): Promise<{ success: boolean; rows?: any[]; error?: string }> {
     if (!this.ensureReady()) {
-      return { success: false, error: 'WCDB 未连接' }
+      return { success: false, error: 'WCDB not connected' }
     }
     try {
-      if (!this.wcdbExecQuery) return { success: false, error: '接口未就绪' }
-      const outPtr = [null as any]
-      const result = this.wcdbExecQuery(this.handle, kind, path || '', sql, outPtr)
-      if (result !== 0 || !outPtr[0]) {
-        return { success: false, error: `执行查询失败: ${result}` }
+      if (!this.wcdbExecQuery) return { success: false, error: 'execQuery API not ready' }
+
+      const lowerKind = String(kind || '').toLowerCase()
+      const autoContactPath = lowerKind === 'contact' && (!path || path.length === 0) && !!this.currentContactDbPath
+      const effectivePath = autoContactPath ? (this.currentContactDbPath as string) : (path || '')
+
+      const parseRows = (ptr: any): { success: boolean; rows?: any[]; error?: string } => {
+        const jsonStr = this.decodeJsonPtr(ptr)
+        if (!jsonStr) return { success: false, error: 'parse query result failed' }
+        return { success: true, rows: JSON.parse(jsonStr) }
       }
-      const jsonStr = this.decodeJsonPtr(outPtr[0])
-      if (!jsonStr) return { success: false, error: '解析查询结果失败' }
-      const rows = JSON.parse(jsonStr)
-      return { success: true, rows }
+
+      const outPtr = [null as any]
+      const result = this.wcdbExecQuery(this.handle, kind, effectivePath, sql, outPtr)
+      if (result === 0 && outPtr[0]) {
+        return parseRows(outPtr[0])
+      }
+
+      if (autoContactPath) {
+        const fallbackOutPtr = [null as any]
+        const fallbackResult = this.wcdbExecQuery(this.handle, kind, '', sql, fallbackOutPtr)
+        if (fallbackResult === 0 && fallbackOutPtr[0]) {
+          this.writeLog('execQuery contact fallback to default handle')
+          return parseRows(fallbackOutPtr[0])
+        }
+      }
+
+      return { success: false, error: 'execute query failed: ' + result }
     } catch (e) {
       return { success: false, error: String(e) }
     }
