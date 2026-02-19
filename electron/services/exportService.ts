@@ -534,11 +534,14 @@ class ExportService {
     groupNicknamesMap: Map<string, string>,
     getContactName: (username: string) => Promise<string>
   ): Promise<string | null> {
-    const xmlType = this.extractXmlValue(content, 'type')
-    if (xmlType !== '2000') return null
+    const normalizedContent = this.normalizeAppMessageContent(content || '')
+    if (!normalizedContent) return null
 
-    const payerUsername = this.extractXmlValue(content, 'payer_username')
-    const receiverUsername = this.extractXmlValue(content, 'receiver_username')
+    const xmlType = this.extractXmlValue(normalizedContent, 'type')
+    if (xmlType && xmlType !== '2000') return null
+
+    const payerUsername = this.extractXmlValue(normalizedContent, 'payer_username')
+    const receiverUsername = this.extractXmlValue(normalizedContent, 'receiver_username')
     if (!payerUsername || !receiverUsername) return null
 
     const cleanedMyWxid = myWxid ? this.cleanAccountDirName(myWxid) : ''
@@ -3955,6 +3958,15 @@ class ExportService {
       const isGroup = sessionId.includes('@chatroom')
       const sessionInfo = await this.getContactInfo(sessionId)
       const myInfo = await this.getContactInfo(cleanedMyWxid)
+      const contactCache = new Map<string, { success: boolean; contact?: any; error?: string }>()
+      const getContactCached = async (username: string) => {
+        if (contactCache.has(username)) {
+          return contactCache.get(username)!
+        }
+        const result = await wcdbService.getContact(username)
+        contactCache.set(username, result)
+        return result
+      }
 
       onProgress?.({
         current: 0,
@@ -3973,6 +3985,24 @@ class ExportService {
       if (collected.rows.length === 0) {
         return { success: false, error: '该会话在指定时间范围内没有消息' }
       }
+
+      const senderUsernames = new Set<string>()
+      for (const msg of collected.rows) {
+        if (msg.senderUsername) senderUsernames.add(msg.senderUsername)
+      }
+      senderUsernames.add(sessionId)
+      await this.preloadContacts(senderUsernames, contactCache)
+
+      const groupNicknameCandidates = isGroup
+        ? this.buildGroupNicknameIdCandidates([
+          ...Array.from(senderUsernames.values()),
+          ...collected.rows.map(msg => msg.senderUsername),
+          cleanedMyWxid
+        ])
+        : []
+      const groupNicknamesMap = isGroup
+        ? await this.getGroupNicknamesForRoom(sessionId, groupNicknameCandidates)
+        : new Map<string, string>()
 
       if (isGroup) {
         await this.mergeGroupMembers(sessionId, collected.memberSet, options.exportAvatars === true)
@@ -4185,6 +4215,23 @@ class ExportService {
         }
         if (mediaItem && (msg.localType === 3 || msg.localType === 47)) {
           textContent = ''
+        }
+        if (textContent.startsWith('[转账]') && msg.content) {
+          const transferDesc = await this.resolveTransferDesc(
+            msg.content,
+            cleanedMyWxid,
+            groupNicknamesMap,
+            async (username) => {
+              const c = await getContactCached(username)
+              if (c.success && c.contact) {
+                return c.contact.remark || c.contact.nickName || c.contact.alias || username
+              }
+              return username
+            }
+          )
+          if (transferDesc) {
+            textContent = textContent.replace('[转账]', `[转账] (${transferDesc})`)
+          }
         }
 
         let mediaHtml = ''
