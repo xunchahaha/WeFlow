@@ -4037,6 +4037,23 @@ function MessageBubble({
       const q = (selector: string) => getDoc()?.querySelector(selector)?.textContent?.trim() || ''
 
       const xmlType = message.xmlType || q('appmsg > type') || q('type')
+
+      // type 57: 引用回复消息，解析 refermsg 渲染为引用样式
+      if (xmlType === '57') {
+        const replyText = q('title') || cleanMessageContent(message.parsedContent) || ''
+        const referContent = q('refermsg > content') || ''
+        const referSender = q('refermsg > displayname') || ''
+        return (
+          <div className="bubble-content">
+            <div className="quoted-message">
+              {referSender && <span className="quoted-sender">{referSender}</span>}
+              <span className="quoted-text">{renderTextWithEmoji(cleanMessageContent(referContent))}</span>
+            </div>
+            <div className="message-text">{renderTextWithEmoji(cleanMessageContent(replyText))}</div>
+          </div>
+        )
+      }
+
       const title = message.linkTitle || q('title') || cleanMessageContent(message.parsedContent) || 'Card'
       const desc = message.appMsgDesc || q('des')
       const url = message.linkUrl || q('url')

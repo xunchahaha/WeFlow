@@ -1856,13 +1856,13 @@
   }
 }
 
-// 卡片类消息：气泡变透明，让卡片自己做视觉容器
-.message-bubble .bubble-content:has(.link-message),
-.message-bubble .bubble-content:has(.card-message),
-.message-bubble .bubble-content:has(.chat-record-message),
-.message-bubble .bubble-content:has(.official-message),
-.message-bubble .bubble-content:has(.channel-video-card),
-.message-bubble .bubble-content:has(.location-message) {
+// 卡片类消息：气泡变透明，让卡片自己做视觉容器（仅直接子元素，排除引用消息内的卡片）
+.message-bubble .bubble-content:has(> .link-message),
+.message-bubble .bubble-content:has(> .card-message),
+.message-bubble .bubble-content:has(> .chat-record-message),
+.message-bubble .bubble-content:has(> .official-message),
+.message-bubble .bubble-content:has(> .channel-video-card),
+.message-bubble .bubble-content:has(> .location-message) {
   background: transparent !important;
   padding: 0 !important;
   border: none !important;
