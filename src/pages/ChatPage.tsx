@@ -332,6 +332,11 @@ function ChatPage(_props: ChatPageProps) {
     count?: number;
   }>({ show: false, mode: 'single' })
 
+  // 发送消息
+  const [sendText, setSendText] = useState('')
+  const [isSending, setIsSending] = useState(false)
+  const [sendFeedback, setSendFeedback] = useState<{ type: 'success' | 'error'; msg: string } | null>(null)
+
   // 联系人信息加载控制
   const isEnrichingRef = useRef(false)
   const enrichCancelledRef = useRef(false)
@@ -1839,6 +1844,26 @@ function ChatPage(_props: ChatPageProps) {
     }
   }, [editingMessage, currentSessionId, editMode, tempFields, handleDelete])
 
+  const handleSendMessage = useCallback(async () => {
+    if (!currentSessionId || !sendText.trim() || isSending) return
+    setIsSending(true)
+    setSendFeedback(null)
+    try {
+      const result = await (window as any).electronAPI.chat.sendMessage(currentSessionId, sendText.trim())
+      if (result.success) {
+        setSendText('')
+        setSendFeedback({ type: 'success', msg: '发送成功' })
+        setTimeout(() => setSendFeedback(null), 2000)
+      } else {
+        setSendFeedback({ type: 'error', msg: result.error || '发送失败' })
+      }
+    } catch (e) {
+      setSendFeedback({ type: 'error', msg: String(e) })
+    } finally {
+      setIsSending(false)
+    }
+  }, [currentSessionId, sendText, isSending])
+
   // 用于在异步循环中获取最新的取消状态
   const cancelDeleteRef = useRef(false)
 
@@ -2405,6 +2430,72 @@ function ChatPage(_props: ChatPageProps) {
                   )}
                 </div>
               )}
+            </div>
+            {/* 发送消息输入框 */}
+            <div style={{
+              padding: '10px 12px',
+              borderTop: '1px solid var(--border-color)',
+              display: 'flex',
+              gap: '8px',
+              alignItems: 'flex-end',
+              background: 'var(--bg-secondary)',
+              flexShrink: 0
+            }}>
+              <textarea
+                placeholder="发送消息... (Enter 发送，Shift+Enter 换行)"
+                value={sendText}
+                onChange={(e) => setSendText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault()
+                    handleSendMessage()
+                  }
+                }}
+                disabled={isSending}
+                rows={2}
+                style={{
+                  flex: 1,
+                  resize: 'none',
+                  background: 'var(--bg-tertiary)',
+                  border: '1px solid var(--border-color)',
+                  borderRadius: '8px',
+                  padding: '8px 12px',
+                  color: 'var(--text-primary)',
+                  fontSize: '13px',
+                  outline: 'none',
+                  fontFamily: 'inherit',
+                  lineHeight: '1.5'
+                }}
+              />
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-end' }}>
+                {sendFeedback && (
+                  <span style={{
+                    fontSize: '11px',
+                    color: sendFeedback.type === 'success' ? '#07c160' : '#fa5151',
+                    whiteSpace: 'nowrap'
+                  }}>
+                    {sendFeedback.msg}
+                  </span>
+                )}
+                <button
+                  onClick={handleSendMessage}
+                  disabled={!sendText.trim() || isSending}
+                  style={{
+                    padding: '8px 16px',
+                    background: sendText.trim() && !isSending ? '#07c160' : 'var(--bg-tertiary)',
+                    color: sendText.trim() && !isSending ? 'white' : 'var(--text-secondary)',
+                    border: 'none',
+                    borderRadius: '8px',
+                    cursor: sendText.trim() && !isSending ? 'pointer' : 'not-allowed',
+                    fontSize: '13px',
+                    fontWeight: 500,
+                    whiteSpace: 'nowrap',
+                    transition: 'background 0.2s'
+                  }}
+                >
+                  {isSending ? '发送中...' : '发送'}
+                </button>
+              </div>
             </div>
           </>
         ) : (

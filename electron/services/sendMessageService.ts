@@ -69,9 +69,9 @@ class SendMessageService {
 
       // 加载 User32 用于查找微信窗口 PID
       this.user32   = this.koffi.load('user32.dll')
-      const WNDENUMPROC = this.koffi.proto('bool __stdcall (void *hWnd, intptr_t lParam)')
+      const WNDENUMPROC = this.koffi.proto('WNDENUMPROC', 'bool __stdcall (void *hWnd, intptr_t lParam)')
       this.WNDENUMPROC_PTR = this.koffi.pointer(WNDENUMPROC)
-      this.EnumWindows             = this.user32.func('EnumWindows', 'bool', [this.WNDENUMPROC_PTR, 'intptr_t'])
+      this.EnumWindows             = this.user32.func('EnumWindows', 'bool', ['WNDENUMPROC *', 'intptr_t'])
       this.GetWindowThreadProcessId = this.user32.func('GetWindowThreadProcessId', 'uint32', ['void*', this.koffi.out('uint32*')])
       this.GetClassNameW           = this.user32.func('GetClassNameW', 'int', ['void*', this.koffi.out('uint16*'), 'int'])
       this.IsWindowVisible         = this.user32.func('IsWindowVisible', 'bool', ['void*'])
@@ -108,7 +108,7 @@ class SendMessageService {
         }
         return true
       },
-      this.koffi.proto('bool __stdcall (void *hWnd, intptr_t lParam)')
+      'WNDENUMPROC *'
     )
     this.EnumWindows(cb, 0)
     this.koffi.unregister(cb)
