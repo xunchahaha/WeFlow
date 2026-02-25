@@ -143,6 +143,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('chat:updateMessage', sessionId, localId, createTime, newContent),
     deleteMessage: (sessionId: string, localId: number, createTime: number, dbPathHint?: string) =>
       ipcRenderer.invoke('chat:deleteMessage', sessionId, localId, createTime, dbPathHint),
+    sendMessage: (toUsername: string, content: string) =>
+      ipcRenderer.invoke('chat:sendMessage', toUsername, content),
     resolveTransferDisplayNames: (chatroomId: string, payerUsername: string, receiverUsername: string) =>
       ipcRenderer.invoke('chat:resolveTransferDisplayNames', chatroomId, payerUsername, receiverUsername),
     getMyAvatarUrl: () => ipcRenderer.invoke('chat:getMyAvatarUrl'),

@@ -24,6 +24,7 @@ import { windowsHelloService } from './services/windowsHelloService'
 
 import { registerNotificationHandlers, showNotification } from './windows/notificationWindow'
 import { httpService } from './services/httpService'
+import { sendMessageService } from './services/sendMessageService'
 
 
 // 配置自动更新
@@ -864,6 +865,10 @@ function registerIpcHandlers() {
 
   ipcMain.handle('chat:deleteMessage', async (_, sessionId: string, localId: number, createTime: number, dbPathHint?: string) => {
     return chatService.deleteMessage(sessionId, localId, createTime, dbPathHint)
+  })
+
+  ipcMain.handle('chat:sendMessage', async (_, toUsername: string, content: string) => {
+    return sendMessageService.sendTextMessage(toUsername, content)
   })
 
   ipcMain.handle('chat:getContact', async (_, username: string) => {
