@@ -16,6 +16,7 @@
 import { app } from 'electron'
 import { join } from 'path'
 import { existsSync } from 'fs'
+import { execSync } from 'child_process'
 
 class SendMessageService {
   private koffi: any = null
@@ -35,6 +36,7 @@ class SendMessageService {
   private GetClassNameW: any = null
   private IsWindowVisible: any = null
   private WNDENUMPROC_PTR: any = null
+  private WNDENUMPROC: any = null
 
   private getDllPath(): string {
     const isPackaged = app?.isPackaged ?? false
@@ -69,9 +71,10 @@ class SendMessageService {
 
       // 加载 User32 用于查找微信窗口 PID
       this.user32   = this.koffi.load('user32.dll')
-      const WNDENUMPROC = this.koffi.proto('WNDENUMPROC', 'bool __stdcall (void *hWnd, intptr_t lParam)')
+      const WNDENUMPROC = this.koffi.proto('bool __stdcall (void *hWnd, intptr_t lParam)')
+      this.WNDENUMPROC = WNDENUMPROC
       this.WNDENUMPROC_PTR = this.koffi.pointer(WNDENUMPROC)
-      this.EnumWindows             = this.user32.func('EnumWindows', 'bool', ['WNDENUMPROC *', 'intptr_t'])
+      this.EnumWindows             = this.user32.func('EnumWindows', 'bool', [this.WNDENUMPROC_PTR, 'intptr_t'])
       this.GetWindowThreadProcessId = this.user32.func('GetWindowThreadProcessId', 'uint32', ['void*', this.koffi.out('uint32*')])
       this.GetClassNameW           = this.user32.func('GetClassNameW', 'int', ['void*', this.koffi.out('uint16*'), 'int'])
       this.IsWindowVisible         = this.user32.func('IsWindowVisible', 'bool', ['void*'])
@@ -91,28 +94,18 @@ class SendMessageService {
     return i >= 0 ? s.slice(0, i) : s
   }
 
-  /** 找到微信主窗口的进程 PID */
+  /** 找到微信进程 PID（通过 tasklist 查 WeChat.exe） */
   private findWeChatPid(): number {
-    let pid = 0
-    const cb = this.koffi.register(
-      (hwnd: any) => {
-        if (!this.IsWindowVisible(hwnd)) return true
-        const buf = Buffer.alloc(512)
-        this.GetClassNameW(hwnd, buf, 256)
-        const cls = this.fromWide(buf)
-        if (cls === 'WeChatMainWndForPC') {
-          const pidBuf = [0]
-          this.GetWindowThreadProcessId(hwnd, pidBuf)
-          pid = pidBuf[0]
-          return false // 停止枚举
-        }
-        return true
-      },
-      'WNDENUMPROC *'
-    )
-    this.EnumWindows(cb, 0)
-    this.koffi.unregister(cb)
-    return pid
+    try {
+      const out = execSync(
+        'tasklist /FI "IMAGENAME eq Weixin.exe" /FO CSV /NH',
+        { encoding: 'utf8', timeout: 3000 }
+      ).trim()
+      // CSV 格式: "Weixin.exe","12345","Console","1","xxx K"
+      const match = out.match(/"Weixin\.exe","(\d+)"/)
+      if (match) return parseInt(match[1], 10)
+    } catch {}
+    return 0
   }
 
   /**
