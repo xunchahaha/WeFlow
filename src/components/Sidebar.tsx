@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
-import { Home, MessageSquare, BarChart3, Users, FileText, Database, Settings, ChevronLeft, ChevronRight, Download, Aperture, UserCircle, Lock } from 'lucide-react'
+import { Home, MessageSquare, BarChart3, Users, FileText, Database, Settings, ChevronLeft, ChevronRight, Download, Aperture, UserCircle, Lock, Smartphone } from 'lucide-react'
 import { useAppStore } from '../stores/appStore'
 
 import './Sidebar.scss'
@@ -100,6 +100,16 @@ function Sidebar() {
         >
           <span className="nav-icon"><Download size={20} /></span>
           <span className="nav-label">导出</span>
+        </NavLink>
+
+        {/* iPad 协议 */}
+        <NavLink
+          to="/ipad"
+          className={`nav-item ${isActive('/ipad') ? 'active' : ''}`}
+          title={collapsed ? 'iPad协议' : undefined}
+        >
+          <span className="nav-icon"><Smartphone size={20} /></span>
+          <span className="nav-label">iPad协议</span>
         </NavLink>
 
 

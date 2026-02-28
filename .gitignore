@@ -17,6 +17,14 @@ dist-ssr
 *.local
 test/
 
+# iPad server binaries
+resources/ipad-server/*.exe
+resources/ipad-server/*.dat
+resources/ipad-server/redis/
+resources/ipad-server/lib/*.dll
+resources/ipad-server/lib/*.so
+resources/ipad-server/lib/*.so.*
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

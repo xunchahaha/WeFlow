@@ -20,6 +20,7 @@ import VideoWindow from './pages/VideoWindow'
 import ImageWindow from './pages/ImageWindow'
 import SnsPage from './pages/SnsPage'
 import ContactsPage from './pages/ContactsPage'
+import IpadPage from './pages/IpadPage'
 import ChatHistoryPage from './pages/ChatHistoryPage'
 import NotificationWindow from './pages/NotificationWindow'
 
@@ -471,6 +472,7 @@ function App() {
               <Route path="/export" element={<ExportPage />} />
               <Route path="/sns" element={<SnsPage />} />
               <Route path="/contacts" element={<ContactsPage />} />
+              <Route path="/ipad" element={<IpadPage />} />
               <Route path="/chat-history/:sessionId/:messageId" element={<ChatHistoryPage />} />
             </Routes>
           </RouteGuard>

@@ -304,5 +304,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
     start: (port?: number) => ipcRenderer.invoke('http:start', port),
     stop: () => ipcRenderer.invoke('http:stop'),
     status: () => ipcRenderer.invoke('http:status')
+  },
+
+  // iPad 协议（Android Pad）
+  ipad: {
+    checkConnection: () => ipcRenderer.invoke('ipad:checkConnection'),
+    setBaseUrl: (url: string) => ipcRenderer.invoke('ipad:setBaseUrl', url),
+    getQRCode: (proxy?: string) => ipcRenderer.invoke('ipad:getQRCode', proxy),
+    checkQR: (uuid: string) => ipcRenderer.invoke('ipad:checkQR', uuid),
+    twiceLogin: (wxid: string) => ipcRenderer.invoke('ipad:twiceLogin', wxid),
+    sendText: (toWxid: string, content: string) => ipcRenderer.invoke('ipad:sendText', toWxid, content),
+    heartbeat: () => ipcRenderer.invoke('ipad:heartbeat'),
+    logout: () => ipcRenderer.invoke('ipad:logout'),
+    getStatus: () => ipcRenderer.invoke('ipad:getStatus'),
+    getContactList: () => ipcRenderer.invoke('ipad:getContactList'),
+    getContactDetail: (towxids: string) => ipcRenderer.invoke('ipad:getContactDetail', towxids),
+    startServer: () => ipcRenderer.invoke('ipad:startServer'),
+    stopServer: () => ipcRenderer.invoke('ipad:stopServer'),
+    serverRunning: () => ipcRenderer.invoke('ipad:serverRunning')
   }
 })

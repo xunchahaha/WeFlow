@@ -25,6 +25,8 @@ import { windowsHelloService } from './services/windowsHelloService'
 import { registerNotificationHandlers, showNotification } from './windows/notificationWindow'
 import { httpService } from './services/httpService'
 import { sendMessageService } from './services/sendMessageService'
+import { ipadService } from './services/ipadService'
+import { ipadProcessManager } from './services/ipadProcessManager'
 
 
 // 配置自动更新
@@ -1472,6 +1474,70 @@ function registerIpcHandlers() {
     }
   })
 
+  // iPad 协议（Android Pad）
+  ipcMain.handle('ipad:checkConnection', async () => {
+    return ipadService.checkConnection()
+  })
+
+  ipcMain.handle('ipad:setBaseUrl', async (_, url: string) => {
+    ipadService.setBaseUrl(url)
+    return { success: true }
+  })
+
+  ipcMain.handle('ipad:getQRCode', async (_, proxy?: string) => {
+    return ipadService.getQRCode(proxy)
+  })
+
+  ipcMain.handle('ipad:checkQR', async (_, uuid: string) => {
+    return ipadService.checkQR(uuid)
+  })
+
+  ipcMain.handle('ipad:twiceLogin', async (_, wxid: string) => {
+    return ipadService.twiceLogin(wxid)
+  })
+
+  ipcMain.handle('ipad:sendText', async (_, toWxid: string, content: string) => {
+    return ipadService.sendTextMessage(toWxid, content)
+  })
+
+  ipcMain.handle('ipad:heartbeat', async () => {
+    return ipadService.heartbeat()
+  })
+
+  ipcMain.handle('ipad:logout', async () => {
+    ipadService.logout()
+    return { success: true }
+  })
+
+  ipcMain.handle('ipad:getStatus', async () => {
+    return {
+      loggedIn: !!ipadService.getLoggedInWxid(),
+      wxid: ipadService.getLoggedInWxid(),
+      baseUrl: ipadService.getBaseUrl()
+    }
+  })
+
+  ipcMain.handle('ipad:getContactList', async () => {
+    return ipadService.getContactList()
+  })
+
+  ipcMain.handle('ipad:getContactDetail', async (_e, towxids: string) => {
+    return ipadService.getContactDetail(towxids)
+  })
+
+  ipcMain.handle('ipad:startServer', async () => {
+    return ipadProcessManager.start()
+  })
+
+  ipcMain.handle('ipad:stopServer', async () => {
+    ipadProcessManager.stop()
+    return { success: true }
+  })
+
+  ipcMain.handle('ipad:serverRunning', async () => {
+    return { running: ipadProcessManager.isRunning() }
+  })
+
 }
 
 // 主窗口引用
@@ -1557,4 +1623,8 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit()
   }
+})
+
+app.on('will-quit', () => {
+  ipadProcessManager.stop()
 })
