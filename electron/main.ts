@@ -1533,10 +1533,10 @@ function registerIpcHandlers() {
     })
   })
 
-  ipcMain.handle('key:autoGetImageKey', async (event, manualDir?: string) => {
+  ipcMain.handle('key:autoGetImageKey', async (event, manualDir?: string, wxid?: string) => {
     return keyService.autoGetImageKey(manualDir, (message) => {
       event.sender.send('key:imageKeyStatus', { message })
-    })
+    }, wxid)
   })
 
   // HTTP API 服务

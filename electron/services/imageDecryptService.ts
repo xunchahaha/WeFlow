@@ -15,8 +15,16 @@ function getStaticFfmpegPath(): string | null {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const ffmpegStatic = require('ffmpeg-static')
 
-    if (typeof ffmpegStatic === 'string' && existsSync(ffmpegStatic)) {
-      return ffmpegStatic
+    if (typeof ffmpegStatic === 'string') {
+      // 修复：如果路径包含 app.asar（打包后），自动替换为 app.asar.unpacked
+      let fixedPath = ffmpegStatic
+      if (fixedPath.includes('app.asar') && !fixedPath.includes('app.asar.unpacked')) {
+        fixedPath = fixedPath.replace('app.asar', 'app.asar.unpacked')
+      }
+
+      if (existsSync(fixedPath)) {
+        return fixedPath
+      }
     }
 
     // 方法2: 手动构建路径（开发环境）

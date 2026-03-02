@@ -779,7 +779,7 @@ function SettingsPage() {
 
     try {
       const accountPath = wxid ? `${dbPath}/${wxid}` : dbPath;
-      const result = await window.electronAPI.key.autoGetImageKey(accountPath)
+      const result = await window.electronAPI.key.autoGetImageKey(accountPath, wxid)
       if (result.success && result.aesKey) {
         if (typeof result.xorKey === 'number') {
           setImageXorKey(`0x${result.xorKey.toString(16).toUpperCase().padStart(2, '0')}`)

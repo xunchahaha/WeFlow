@@ -651,7 +651,8 @@ export class KeyService {
 
   async autoGetImageKey(
       manualDir?: string,
-      onProgress?: (message: string) => void
+      onProgress?: (message: string) => void,
+      wxidParam?: string
   ): Promise<ImageKeyResult> {
     if (!this.ensureWin32()) return { success: false, error: '仅支持 Windows' }
     if (!this.ensureLoaded()) return { success: false, error: 'wx_key.dll 未加载' }
@@ -683,20 +684,29 @@ export class KeyService {
     const codes: number[] = accounts[0].keys.map((k: any) => k.code)
     console.log('[ImageKey] codes:', codes, 'DLL wxids:', accounts.map((a: any) => a.wxid))
 
-    // 从 manualDir 提取前端已配置好的正确 wxid
-    // 格式: "D:\weixin\xwechat_files\wxid_xxx_1234" → "wxid_xxx_1234"
+    // 优先级: 1. 直接传入的wxidParam 2. 从manualDir提取 3. DLL返回的wxid（可能是unknown）
     let targetWxid = ''
-    if (manualDir) {
+    
+    // 方案1: 直接使用传入的wxidParam（最优先）
+    if (wxidParam && wxidParam.startsWith('wxid_')) {
+      targetWxid = wxidParam
+      console.log('[ImageKey] 使用直接传入的 wxid:', targetWxid)
+    }
+    
+    // 方案2: 从 manualDir 提取前端已配置好的正确 wxid
+    // 格式: "D:\weixin\xwechat_files\wxid_xxx_1234" → "wxid_xxx_1234"
+    if (!targetWxid && manualDir) {
       const dirName = manualDir.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? ''
       if (dirName.startsWith('wxid_')) {
         targetWxid = dirName
+        console.log('[ImageKey] 从 manualDir 提取 wxid:', targetWxid)
       }
     }
 
+    // 方案3: 回退到 DLL 发现的第一个（可能是 unknown）
     if (!targetWxid) {
-      // 无法从 manualDir 提取 wxid，回退到 DLL 发现的第一个
       targetWxid = accounts[0].wxid
-      console.log('[ImageKey] 无法从 manualDir 提取 wxid，使用 DLL 发现的:', targetWxid)
+      console.log('[ImageKey] 无法获取 wxid，使用 DLL 发现的:', targetWxid)
     }
 
     // CleanWxid: 截断到第二个下划线，与 xkey 算法一致

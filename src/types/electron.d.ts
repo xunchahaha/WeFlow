@@ -66,7 +66,7 @@ export interface ElectronAPI {
   }
   key: {
     autoGetDbKey: () => Promise<{ success: boolean; key?: string; error?: string; logs?: string[] }>
-    autoGetImageKey: (manualDir?: string) => Promise<{ success: boolean; xorKey?: number; aesKey?: string; error?: string }>
+    autoGetImageKey: (manualDir?: string, wxid?: string) => Promise<{ success: boolean; xorKey?: number; aesKey?: string; error?: string }>
     onDbKeyStatus: (callback: (payload: { message: string; level: number }) => void) => () => void
     onImageKeyStatus: (callback: (payload: { message: string }) => void) => () => void
   }
