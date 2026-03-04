@@ -486,6 +486,21 @@ export interface ElectronAPI {
     startAvailableYearsLoad: () => Promise<{
       success: boolean
       taskId?: string
+      reused?: boolean
+      snapshot?: {
+        years?: number[]
+        done: boolean
+        error?: string
+        canceled?: boolean
+        strategy?: 'cache' | 'native' | 'hybrid'
+        phase?: 'cache' | 'native' | 'scan' | 'done'
+        statusText?: string
+        nativeElapsedMs?: number
+        scanElapsedMs?: number
+        totalElapsedMs?: number
+        switched?: boolean
+        nativeTimedOut?: boolean
+      }
       error?: string
     }>
     cancelAvailableYearsLoad: (taskId: string) => Promise<{
@@ -582,6 +597,14 @@ export interface ElectronAPI {
       done: boolean
       error?: string
       canceled?: boolean
+      strategy?: 'cache' | 'native' | 'hybrid'
+      phase?: 'cache' | 'native' | 'scan' | 'done'
+      statusText?: string
+      nativeElapsedMs?: number
+      scanElapsedMs?: number
+      totalElapsedMs?: number
+      switched?: boolean
+      nativeTimedOut?: boolean
     }) => void) => () => void
     onProgress: (callback: (payload: { status: string; progress: number }) => void) => () => void
   }

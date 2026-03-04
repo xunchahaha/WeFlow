@@ -270,7 +270,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
     generateReport: (year: number) => ipcRenderer.invoke('annualReport:generateReport', year),
     exportImages: (payload: { baseDir: string; folderName: string; images: Array<{ name: string; dataUrl: string }> }) =>
       ipcRenderer.invoke('annualReport:exportImages', payload),
-    onAvailableYearsProgress: (callback: (payload: { taskId: string; years?: number[]; done: boolean; error?: string; canceled?: boolean }) => void) => {
+    onAvailableYearsProgress: (callback: (payload: {
+      taskId: string
+      years?: number[]
+      done: boolean
+      error?: string
+      canceled?: boolean
+      strategy?: 'cache' | 'native' | 'hybrid'
+      phase?: 'cache' | 'native' | 'scan' | 'done'
+      statusText?: string
+      nativeElapsedMs?: number
+      scanElapsedMs?: number
+      totalElapsedMs?: number
+      switched?: boolean
+      nativeTimedOut?: boolean
+    }) => void) => {
       ipcRenderer.on('annualReport:availableYearsProgress', (_, payload) => callback(payload))
       return () => ipcRenderer.removeAllListeners('annualReport:availableYearsProgress')
     },

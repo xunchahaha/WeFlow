@@ -85,6 +85,28 @@ export interface AnnualReportData {
   } | null
 }
 
+export interface AvailableYearsLoadProgress {
+  years: number[]
+  strategy: 'cache' | 'native' | 'hybrid'
+  phase: 'cache' | 'native' | 'scan'
+  statusText: string
+  nativeElapsedMs: number
+  scanElapsedMs: number
+  totalElapsedMs: number
+  switched?: boolean
+  nativeTimedOut?: boolean
+}
+
+interface AvailableYearsLoadMeta {
+  strategy: 'cache' | 'native' | 'hybrid'
+  nativeElapsedMs: number
+  scanElapsedMs: number
+  totalElapsedMs: number
+  switched: boolean
+  nativeTimedOut: boolean
+  statusText: string
+}
+
 class AnnualReportService {
   private readonly availableYearsCacheTtlMs = 10 * 60 * 1000
   private readonly availableYearsScanConcurrency = 4
@@ -596,46 +618,222 @@ class AnnualReportService {
     dbPath: string
     decryptKey: string
     wxid: string
-    onProgress?: (years: number[]) => void
+    onProgress?: (payload: AvailableYearsLoadProgress) => void
     shouldCancel?: () => boolean
-  }): Promise<{ success: boolean; data?: number[]; error?: string }> {
+    nativeTimeoutMs?: number
+  }): Promise<{ success: boolean; data?: number[]; error?: string; meta?: AvailableYearsLoadMeta }> {
     try {
       const isCancelled = () => params.shouldCancel?.() === true
+      const totalStartedAt = Date.now()
+      let nativeElapsedMs = 0
+      let scanElapsedMs = 0
+      let switched = false
+      let nativeTimedOut = false
+      let latestYears: number[] = []
+
+      const emitProgress = (payload: {
+        years?: number[]
+        strategy: 'cache' | 'native' | 'hybrid'
+        phase: 'cache' | 'native' | 'scan'
+        statusText: string
+        switched?: boolean
+        nativeTimedOut?: boolean
+      }) => {
+        if (!params.onProgress) return
+        if (Array.isArray(payload.years)) latestYears = payload.years
+        params.onProgress({
+          years: latestYears,
+          strategy: payload.strategy,
+          phase: payload.phase,
+          statusText: payload.statusText,
+          nativeElapsedMs,
+          scanElapsedMs,
+          totalElapsedMs: Date.now() - totalStartedAt,
+          switched: payload.switched ?? switched,
+          nativeTimedOut: payload.nativeTimedOut ?? nativeTimedOut
+        })
+      }
+
+      const buildMeta = (
+        strategy: 'cache' | 'native' | 'hybrid',
+        statusText: string
+      ): AvailableYearsLoadMeta => ({
+        strategy,
+        nativeElapsedMs,
+        scanElapsedMs,
+        totalElapsedMs: Date.now() - totalStartedAt,
+        switched,
+        nativeTimedOut,
+        statusText
+      })
+
       const conn = await this.ensureConnectedWithConfig(params.dbPath, params.decryptKey, params.wxid)
-      if (!conn.success || !conn.cleanedWxid) return { success: false, error: conn.error }
-      if (isCancelled()) return { success: false, error: '已取消加载年份数据' }
+      if (!conn.success || !conn.cleanedWxid) return { success: false, error: conn.error, meta: buildMeta('hybrid', '连接数据库失败') }
+      if (isCancelled()) return { success: false, error: '已取消加载年份数据', meta: buildMeta('hybrid', '已取消加载年份数据') }
       const cacheKey = this.buildAvailableYearsCacheKey(params.dbPath, conn.cleanedWxid)
       const cached = this.getCachedAvailableYears(cacheKey)
       if (cached) {
-        params.onProgress?.(cached)
-        return { success: true, data: cached }
+        latestYears = cached
+        emitProgress({
+          years: cached,
+          strategy: 'cache',
+          phase: 'cache',
+          statusText: '命中缓存，已快速加载年份数据'
+        })
+        return {
+          success: true,
+          data: cached,
+          meta: buildMeta('cache', '命中缓存，已快速加载年份数据')
+        }
       }
 
       const sessionIds = await this.getPrivateSessions(conn.cleanedWxid)
       if (sessionIds.length === 0) {
-        return { success: false, error: '未找到消息会话' }
+        return { success: false, error: '未找到消息会话', meta: buildMeta('hybrid', '未找到消息会话') }
       }
-      if (isCancelled()) return { success: false, error: '已取消加载年份数据' }
+      if (isCancelled()) return { success: false, error: '已取消加载年份数据', meta: buildMeta('hybrid', '已取消加载年份数据') }
+
+      const nativeTimeoutMs = Math.max(1000, Math.floor(params.nativeTimeoutMs || 5000))
+      const nativeStartedAt = Date.now()
+      let nativeTicker: ReturnType<typeof setInterval> | null = null
+
+      emitProgress({
+        strategy: 'native',
+        phase: 'native',
+        statusText: '正在使用原生快速模式加载年份...'
+      })
+      nativeTicker = setInterval(() => {
+        nativeElapsedMs = Date.now() - nativeStartedAt
+        emitProgress({
+          strategy: 'native',
+          phase: 'native',
+          statusText: '正在使用原生快速模式加载年份...'
+        })
+      }, 120)
+
+      const nativeRace = await Promise.race([
+        wcdbService.getAvailableYears(sessionIds)
+          .then((result) => ({ kind: 'result' as const, result }))
+          .catch((error) => ({ kind: 'error' as const, error: String(error) })),
+        new Promise<{ kind: 'timeout' }>((resolve) => setTimeout(() => resolve({ kind: 'timeout' }), nativeTimeoutMs))
+      ])
+
+      if (nativeTicker) {
+        clearInterval(nativeTicker)
+        nativeTicker = null
+      }
+      nativeElapsedMs = Math.max(nativeElapsedMs, Date.now() - nativeStartedAt)
+
+      if (isCancelled()) return { success: false, error: '已取消加载年份数据', meta: buildMeta('hybrid', '已取消加载年份数据') }
+
+      if (nativeRace.kind === 'result' && nativeRace.result.success && Array.isArray(nativeRace.result.data) && nativeRace.result.data.length > 0) {
+        const years = this.normalizeAvailableYears(nativeRace.result.data)
+        latestYears = years
+        this.setCachedAvailableYears(cacheKey, years)
+        emitProgress({
+          years,
+          strategy: 'native',
+          phase: 'native',
+          statusText: '原生快速模式加载完成'
+        })
+        return {
+          success: true,
+          data: years,
+          meta: buildMeta('native', '原生快速模式加载完成')
+        }
+      }
+
+      switched = true
+      nativeTimedOut = nativeRace.kind === 'timeout'
+      emitProgress({
+        strategy: 'hybrid',
+        phase: 'native',
+        statusText: nativeTimedOut
+          ? '原生快速模式超时，已自动切换到扫表兼容模式...'
+          : '原生快速模式不可用，已自动切换到扫表兼容模式...',
+        switched: true,
+        nativeTimedOut
+      })
+
+      const scanStartedAt = Date.now()
+      let scanTicker: ReturnType<typeof setInterval> | null = null
+      scanTicker = setInterval(() => {
+        scanElapsedMs = Date.now() - scanStartedAt
+        emitProgress({
+          strategy: 'hybrid',
+          phase: 'scan',
+          statusText: nativeTimedOut
+            ? '原生已超时，正在使用扫表兼容模式加载年份...'
+            : '正在使用扫表兼容模式加载年份...',
+          switched: true,
+          nativeTimedOut
+        })
+      }, 120)
 
       let years = await this.getAvailableYearsByTableScan(sessionIds, {
-        onProgress: params.onProgress,
+        onProgress: (items) => {
+          latestYears = items
+          scanElapsedMs = Date.now() - scanStartedAt
+          emitProgress({
+            years: items,
+            strategy: 'hybrid',
+            phase: 'scan',
+            statusText: nativeTimedOut
+              ? '原生已超时，正在使用扫表兼容模式加载年份...'
+              : '正在使用扫表兼容模式加载年份...',
+            switched: true,
+            nativeTimedOut
+          })
+        },
         shouldCancel: params.shouldCancel
       })
-      if (isCancelled()) return { success: false, error: '已取消加载年份数据' }
+
+      if (isCancelled()) {
+        if (scanTicker) clearInterval(scanTicker)
+        return { success: false, error: '已取消加载年份数据', meta: buildMeta('hybrid', '已取消加载年份数据') }
+      }
       if (years.length === 0) {
-        // 扫表失败时，再降级到游标首尾扫描，保证兼容性。
         years = await this.getAvailableYearsByEdgeScan(sessionIds, {
-          onProgress: params.onProgress,
+          onProgress: (items) => {
+            latestYears = items
+            scanElapsedMs = Date.now() - scanStartedAt
+            emitProgress({
+              years: items,
+              strategy: 'hybrid',
+              phase: 'scan',
+              statusText: '扫表结果为空，正在执行游标兜底扫描...',
+              switched: true,
+              nativeTimedOut
+            })
+          },
           shouldCancel: params.shouldCancel
         })
       }
-      if (isCancelled()) return { success: false, error: '已取消加载年份数据' }
+      if (scanTicker) {
+        clearInterval(scanTicker)
+        scanTicker = null
+      }
+      scanElapsedMs = Math.max(scanElapsedMs, Date.now() - scanStartedAt)
+
+      if (isCancelled()) return { success: false, error: '已取消加载年份数据', meta: buildMeta('hybrid', '已取消加载年份数据') }
 
       this.setCachedAvailableYears(cacheKey, years)
-      params.onProgress?.(years)
-      return { success: true, data: years }
+      latestYears = years
+      emitProgress({
+        years,
+        strategy: 'hybrid',
+        phase: 'scan',
+        statusText: '扫表兼容模式加载完成',
+        switched: true,
+        nativeTimedOut
+      })
+      return {
+        success: true,
+        data: years,
+        meta: buildMeta('hybrid', '扫表兼容模式加载完成')
+      }
     } catch (e) {
-      return { success: false, error: String(e) }
+      return { success: false, error: String(e), meta: { strategy: 'hybrid', nativeElapsedMs: 0, scanElapsedMs: 0, totalElapsedMs: 0, switched: false, nativeTimedOut: false, statusText: '加载年度数据失败' } }
     }
   }
 

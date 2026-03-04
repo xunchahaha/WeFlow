@@ -4,6 +4,20 @@ import { Calendar, Loader2, Sparkles, Users } from 'lucide-react'
 import './AnnualReportPage.scss'
 
 type YearOption = number | 'all'
+type YearsLoadPayload = {
+  years?: number[]
+  done: boolean
+  error?: string
+  canceled?: boolean
+  strategy?: 'cache' | 'native' | 'hybrid'
+  phase?: 'cache' | 'native' | 'scan' | 'done'
+  statusText?: string
+  nativeElapsedMs?: number
+  scanElapsedMs?: number
+  totalElapsedMs?: number
+  switched?: boolean
+  nativeTimedOut?: boolean
+}
 
 const formatLoadElapsed = (ms: number) => {
   const totalSeconds = Math.max(0, ms) / 1000
@@ -21,37 +35,36 @@ function AnnualReportPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [isLoadingMoreYears, setIsLoadingMoreYears] = useState(false)
   const [hasYearsLoadFinished, setHasYearsLoadFinished] = useState(false)
-  const [loadElapsedMs, setLoadElapsedMs] = useState(0)
+  const [loadStrategy, setLoadStrategy] = useState<'cache' | 'native' | 'hybrid'>('native')
+  const [loadPhase, setLoadPhase] = useState<'cache' | 'native' | 'scan' | 'done'>('native')
+  const [loadStatusText, setLoadStatusText] = useState('准备加载年份数据...')
+  const [nativeElapsedMs, setNativeElapsedMs] = useState(0)
+  const [scanElapsedMs, setScanElapsedMs] = useState(0)
+  const [totalElapsedMs, setTotalElapsedMs] = useState(0)
+  const [hasSwitchedStrategy, setHasSwitchedStrategy] = useState(false)
+  const [nativeTimedOut, setNativeTimedOut] = useState(false)
   const [isGenerating, setIsGenerating] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
 
   useEffect(() => {
     let disposed = false
     let taskId = ''
-    const loadStartedAt = Date.now()
-    let ticker: ReturnType<typeof setInterval> | null = null
 
-    const startTicker = () => {
-      setLoadElapsedMs(0)
-      if (ticker) clearInterval(ticker)
-      ticker = setInterval(() => {
-        if (disposed) return
-        setLoadElapsedMs(Date.now() - loadStartedAt)
-      }, 100)
-    }
-
-    const stopTicker = () => {
-      setLoadElapsedMs(Date.now() - loadStartedAt)
-      if (ticker) {
-        clearInterval(ticker)
-        ticker = null
+    const applyLoadPayload = (payload: YearsLoadPayload) => {
+      if (payload.strategy) setLoadStrategy(payload.strategy)
+      if (payload.phase) setLoadPhase(payload.phase)
+      if (typeof payload.statusText === 'string' && payload.statusText) setLoadStatusText(payload.statusText)
+      if (typeof payload.nativeElapsedMs === 'number' && Number.isFinite(payload.nativeElapsedMs)) {
+        setNativeElapsedMs(Math.max(0, payload.nativeElapsedMs))
       }
-    }
-
-    const stopListen = window.electronAPI.annualReport.onAvailableYearsProgress((payload) => {
-      if (disposed) return
-      if (taskId && payload.taskId !== taskId) return
-      if (!taskId) taskId = payload.taskId
+      if (typeof payload.scanElapsedMs === 'number' && Number.isFinite(payload.scanElapsedMs)) {
+        setScanElapsedMs(Math.max(0, payload.scanElapsedMs))
+      }
+      if (typeof payload.totalElapsedMs === 'number' && Number.isFinite(payload.totalElapsedMs)) {
+        setTotalElapsedMs(Math.max(0, payload.totalElapsedMs))
+      }
+      if (typeof payload.switched === 'boolean') setHasSwitchedStrategy(payload.switched)
+      if (typeof payload.nativeTimedOut === 'boolean') setNativeTimedOut(payload.nativeTimedOut)
 
       const years = Array.isArray(payload.years) ? payload.years : []
       if (years.length > 0) {
@@ -66,7 +79,6 @@ function AnnualReportPage() {
           if (typeof prev === 'number' && years.includes(prev)) return prev
           return years[0]
         })
-        // 只要有首批年份可选，就不再阻塞整个页面。
         setIsLoading(false)
       }
 
@@ -78,35 +90,50 @@ function AnnualReportPage() {
         setIsLoading(false)
         setIsLoadingMoreYears(false)
         setHasYearsLoadFinished(true)
-        stopTicker()
+        setLoadPhase('done')
       } else {
         setIsLoadingMoreYears(true)
         setHasYearsLoadFinished(false)
       }
+    }
+
+    const stopListen = window.electronAPI.annualReport.onAvailableYearsProgress((payload) => {
+      if (disposed) return
+      if (taskId && payload.taskId !== taskId) return
+      if (!taskId) taskId = payload.taskId
+      applyLoadPayload(payload)
     })
 
     const startLoad = async () => {
       setIsLoading(true)
       setIsLoadingMoreYears(true)
       setHasYearsLoadFinished(false)
+      setLoadStrategy('native')
+      setLoadPhase('native')
+      setLoadStatusText('准备使用原生快速模式加载年份...')
+      setNativeElapsedMs(0)
+      setScanElapsedMs(0)
+      setTotalElapsedMs(0)
+      setHasSwitchedStrategy(false)
+      setNativeTimedOut(false)
       setLoadError(null)
-      startTicker()
       try {
         const startResult = await window.electronAPI.annualReport.startAvailableYearsLoad()
         if (!startResult.success || !startResult.taskId) {
           setLoadError(startResult.error || '加载年度数据失败')
           setIsLoading(false)
           setIsLoadingMoreYears(false)
-          stopTicker()
           return
         }
         taskId = startResult.taskId
+        if (startResult.snapshot) {
+          applyLoadPayload(startResult.snapshot)
+        }
       } catch (e) {
         console.error(e)
         setLoadError(String(e))
         setIsLoading(false)
         setIsLoadingMoreYears(false)
-        stopTicker()
       }
     }
 
@@ -114,11 +141,7 @@ function AnnualReportPage() {
 
     return () => {
       disposed = true
-      stopTicker()
       stopListen()
-      if (taskId) {
-        void window.electronAPI.annualReport.cancelAvailableYearsLoad(taskId)
-      }
     }
   }, [])
 
@@ -146,7 +169,15 @@ function AnnualReportPage() {
       <div className="annual-report-page">
         <Loader2 size={32} className="spin" style={{ color: 'var(--text-tertiary)' }} />
         <p style={{ color: 'var(--text-tertiary)', marginTop: 16 }}>正在加载年份数据（首批）...</p>
-        <p style={{ color: 'var(--text-tertiary)', marginTop: 8 }}>已耗时 {formatLoadElapsed(loadElapsedMs)}</p>
+        <div className="load-telemetry compact">
+          <p><span className="label">加载方式：</span>{getStrategyLabel({ loadStrategy, loadPhase, hasYearsLoadFinished, hasSwitchedStrategy, nativeTimedOut })}</p>
+          <p><span className="label">状态：</span>{loadStatusText || '正在加载年份数据...'}</p>
+          <p>
+            <span className="label">原生耗时：</span>{formatLoadElapsed(nativeElapsedMs)}{nativeTimedOut ? '（超时）' : ''} ｜{' '}
+            <span className="label">扫表耗时：</span>{formatLoadElapsed(scanElapsedMs)} ｜{' '}
+            <span className="label">总耗时：</span>{formatLoadElapsed(totalElapsedMs)}
+          </p>
+        </div>
       </div>
     )
   }
@@ -174,6 +205,7 @@ function AnnualReportPage() {
 
   const loadedYearCount = availableYears.length
   const isYearStatusComplete = hasYearsLoadFinished
+  const strategyLabel = getStrategyLabel({ loadStrategy, loadPhase, hasYearsLoadFinished, hasSwitchedStrategy, nativeTimedOut })
   const renderYearLoadStatus = () => (
     <div className={`year-load-status ${isYearStatusComplete ? 'complete' : 'loading'}`}>
       {isYearStatusComplete ? (
@@ -194,15 +226,27 @@ function AnnualReportPage() {
       {loadedYearCount > 0 && (
         <p className={`page-desc load-summary ${isYearStatusComplete ? 'complete' : 'loading'}`}>
           {isYearStatusComplete ? (
-            <>已显示 {loadedYearCount} 个年份，年份数据已全部加载完毕。总耗时 {formatLoadElapsed(loadElapsedMs)}</>
+            <>已显示 {loadedYearCount} 个年份，年份数据已全部加载完毕。总耗时 {formatLoadElapsed(totalElapsedMs)}</>
           ) : (
             <>
               已显示 {loadedYearCount} 个年份，正在补充更多年份<span className="dot-ellipsis" aria-hidden="true">...</span>
-              （已耗时 {formatLoadElapsed(loadElapsedMs)}）
+              （已耗时 {formatLoadElapsed(totalElapsedMs)}）
             </>
           )}
         </p>
       )}
+      <div className={`load-telemetry ${isYearStatusComplete ? 'complete' : 'loading'}`}>
+        <p><span className="label">加载方式：</span>{strategyLabel}</p>
+        <p>
+          <span className="label">状态：</span>
+          {loadStatusText || (isYearStatusComplete ? '全部年份已加载完毕' : '正在加载年份数据...')}
+        </p>
+        <p>
+          <span className="label">原生耗时：</span>{formatLoadElapsed(nativeElapsedMs)}{nativeTimedOut ? '（超时）' : ''} ｜{' '}
+          <span className="label">扫表耗时：</span>{formatLoadElapsed(scanElapsedMs)} ｜{' '}
+          <span className="label">总耗时：</span>{formatLoadElapsed(totalElapsedMs)}
+        </p>
+      </div>
 
       <div className="report-sections">
         <section className="report-section">
@@ -289,6 +333,25 @@ function AnnualReportPage() {
       </div>
     </div>
   )
+}
+
+function getStrategyLabel(params: {
+  loadStrategy: 'cache' | 'native' | 'hybrid'
+  loadPhase: 'cache' | 'native' | 'scan' | 'done'
+  hasYearsLoadFinished: boolean
+  hasSwitchedStrategy: boolean
+  nativeTimedOut: boolean
+}): string {
+  const { loadStrategy, loadPhase, hasYearsLoadFinished, hasSwitchedStrategy, nativeTimedOut } = params
+  if (loadStrategy === 'cache') return '缓存模式（快速）'
+  if (hasYearsLoadFinished) {
+    if (loadStrategy === 'native') return '原生快速模式'
+    if (hasSwitchedStrategy || nativeTimedOut) return '混合策略（原生→扫表）'
+    return '扫表兼容模式'
+  }
+  if (loadPhase === 'native') return '原生快速模式（优先）'
+  if (loadPhase === 'scan') return '扫表兼容模式（回退）'
+  return '混合策略'
 }
 
 export default AnnualReportPage

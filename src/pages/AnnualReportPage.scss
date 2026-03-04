@@ -34,6 +34,40 @@
   color: var(--text-secondary);
 }
 
+.load-telemetry {
+  width: min(760px, 100%);
+  padding: 12px 14px;
+  margin: 0 0 28px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--border-color) 80%, transparent);
+  background: color-mix(in srgb, var(--card-bg) 92%, transparent);
+  text-align: left;
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+
+  p {
+    margin: 4px 0;
+  }
+
+  .label {
+    color: var(--text-tertiary);
+  }
+}
+
+.load-telemetry.loading {
+  border-color: color-mix(in srgb, var(--primary) 30%, var(--border-color));
+}
+
+.load-telemetry.complete {
+  border-color: color-mix(in srgb, var(--primary) 40%, var(--border-color));
+}
+
+.load-telemetry.compact {
+  margin: 12px 0 0;
+  width: min(560px, 100%);
+}
+
 .report-sections {
   display: flex;
   flex-direction: column;

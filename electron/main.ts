@@ -100,9 +100,38 @@ interface ExportTaskControlState {
   stopRequested: boolean
 }
 
+type AnnualReportYearsLoadStrategy = 'cache' | 'native' | 'hybrid'
+type AnnualReportYearsLoadPhase = 'cache' | 'native' | 'scan' | 'done'
+
+interface AnnualReportYearsProgressPayload {
+  years?: number[]
+  done: boolean
+  error?: string
+  canceled?: boolean
+  strategy?: AnnualReportYearsLoadStrategy
+  phase?: AnnualReportYearsLoadPhase
+  statusText?: string
+  nativeElapsedMs?: number
+  scanElapsedMs?: number
+  totalElapsedMs?: number
+  switched?: boolean
+  nativeTimedOut?: boolean
+}
+
+interface AnnualReportYearsTaskState {
+  cacheKey: string
+  canceled: boolean
+  done: boolean
+  snapshot: AnnualReportYearsProgressPayload
+  updatedAt: number
+}
+
 const exportTaskControlMap = new Map<string, ExportTaskControlState>()
 const pendingExportTaskControlMap = new Map<string, ExportTaskControlState>()
-const annualReportYearsLoadTasks = new Map<string, { canceled: boolean }>()
+const annualReportYearsLoadTasks = new Map<string, AnnualReportYearsTaskState>()
+const annualReportYearsTaskByCacheKey = new Map<string, string>()
+const annualReportYearsSnapshotCache = new Map<string, { snapshot: AnnualReportYearsProgressPayload; updatedAt: number; taskId: string }>()
+const annualReportYearsSnapshotTtlMs = 10 * 60 * 1000
 
 const getTaskControlState = (taskId?: string): ExportTaskControlState | null => {
   const normalized = typeof taskId === 'string' ? taskId.trim() : ''
@@ -122,8 +151,65 @@ const createTaskControlState = (taskId?: string): string | null => {
   return normalized
 }
 
+const normalizeAnnualReportYearsSnapshot = (snapshot: AnnualReportYearsProgressPayload): AnnualReportYearsProgressPayload => {
+  const years = Array.isArray(snapshot.years) ? [...snapshot.years] : []
+  return { ...snapshot, years }
+}
+
+const buildAnnualReportYearsCacheKey = (dbPath: string, wxid: string): string => {
+  return `${String(dbPath || '').trim()}\u0001${String(wxid || '').trim()}`
+}
+
+const pruneAnnualReportYearsSnapshotCache = (): void => {
+  const now = Date.now()
+  for (const [cacheKey, entry] of annualReportYearsSnapshotCache.entries()) {
+    if (now - entry.updatedAt > annualReportYearsSnapshotTtlMs) {
+      annualReportYearsSnapshotCache.delete(cacheKey)
+    }
+  }
+}
+
+const persistAnnualReportYearsSnapshot = (
+  cacheKey: string,
+  taskId: string,
+  snapshot: AnnualReportYearsProgressPayload
+): void => {
+  annualReportYearsSnapshotCache.set(cacheKey, {
+    taskId,
+    snapshot: normalizeAnnualReportYearsSnapshot(snapshot),
+    updatedAt: Date.now()
+  })
+  pruneAnnualReportYearsSnapshotCache()
+}
+
+const getAnnualReportYearsSnapshot = (
+  cacheKey: string
+): { taskId: string; snapshot: AnnualReportYearsProgressPayload } | null => {
+  pruneAnnualReportYearsSnapshotCache()
+  const entry = annualReportYearsSnapshotCache.get(cacheKey)
+  if (!entry) return null
+  return {
+    taskId: entry.taskId,
+    snapshot: normalizeAnnualReportYearsSnapshot(entry.snapshot)
+  }
+}
+
+const broadcastAnnualReportYearsProgress = (
+  taskId: string,
+  payload: AnnualReportYearsProgressPayload
+): void => {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (win.isDestroyed()) continue
+    win.webContents.send('annualReport:availableYearsProgress', {
+      taskId,
+      ...payload
+    })
+  }
+}
+
 const isYearsLoadCanceled = (taskId: string): boolean => {
-  return annualReportYearsLoadTasks.get(taskId)?.canceled === true
+  const task = annualReportYearsLoadTasks.get(taskId)
+  return task?.canceled === true
 }
 
 const clearTaskControlState = (taskId?: string): void => {
@@ -1543,51 +1629,178 @@ function registerIpcHandlers() {
     const cfg = configService || new ConfigService()
     configService = cfg
 
-    const taskId = `years_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
-    annualReportYearsLoadTasks.set(taskId, { canceled: false })
-    const sender = event.sender
+    const dbPath = cfg.get('dbPath')
+    const decryptKey = cfg.get('decryptKey')
+    const wxid = cfg.get('myWxid')
+    const cacheKey = buildAnnualReportYearsCacheKey(dbPath, wxid)
 
-    const sendProgress = (payload: { years?: number[]; done: boolean; error?: string; canceled?: boolean }) => {
-      if (!sender.isDestroyed()) {
-        sender.send('annualReport:availableYearsProgress', {
-          taskId,
-          ...payload
-        })
+    const runningTaskId = annualReportYearsTaskByCacheKey.get(cacheKey)
+    if (runningTaskId) {
+      const runningTask = annualReportYearsLoadTasks.get(runningTaskId)
+      if (runningTask && !runningTask.done) {
+        return {
+          success: true,
+          taskId: runningTaskId,
+          reused: true,
+          snapshot: normalizeAnnualReportYearsSnapshot(runningTask.snapshot)
+        }
+      }
+      annualReportYearsTaskByCacheKey.delete(cacheKey)
+    }
+
+    const cachedSnapshot = getAnnualReportYearsSnapshot(cacheKey)
+    if (cachedSnapshot && cachedSnapshot.snapshot.done) {
+      return {
+        success: true,
+        taskId: cachedSnapshot.taskId,
+        reused: true,
+        snapshot: normalizeAnnualReportYearsSnapshot(cachedSnapshot.snapshot)
       }
     }
+
+    const taskId = `years_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    const initialSnapshot: AnnualReportYearsProgressPayload = cachedSnapshot?.snapshot && !cachedSnapshot.snapshot.done
+      ? {
+        ...normalizeAnnualReportYearsSnapshot(cachedSnapshot.snapshot),
+        done: false,
+        canceled: false,
+        error: undefined
+      }
+      : {
+        years: [],
+        done: false,
+        strategy: 'native',
+        phase: 'native',
+        statusText: '准备使用原生快速模式加载年份...',
+        nativeElapsedMs: 0,
+        scanElapsedMs: 0,
+        totalElapsedMs: 0,
+        switched: false,
+        nativeTimedOut: false
+      }
+
+    const updateTaskSnapshot = (payload: AnnualReportYearsProgressPayload): AnnualReportYearsProgressPayload | null => {
+      const task = annualReportYearsLoadTasks.get(taskId)
+      if (!task) return null
+
+      const hasPayloadYears = Array.isArray(payload.years)
+      const nextYears = (hasPayloadYears && (payload.done || (payload.years || []).length > 0))
+        ? [...(payload.years || [])]
+        : Array.isArray(task.snapshot.years) ? [...task.snapshot.years] : []
+
+      const nextSnapshot: AnnualReportYearsProgressPayload = normalizeAnnualReportYearsSnapshot({
+        ...task.snapshot,
+        ...payload,
+        years: nextYears
+      })
+      task.snapshot = nextSnapshot
+      task.done = nextSnapshot.done === true
+      task.updatedAt = Date.now()
+      annualReportYearsLoadTasks.set(taskId, task)
+      persistAnnualReportYearsSnapshot(task.cacheKey, taskId, nextSnapshot)
+      return nextSnapshot
+    }
+
+    annualReportYearsLoadTasks.set(taskId, {
+      cacheKey,
+      canceled: false,
+      done: false,
+      snapshot: normalizeAnnualReportYearsSnapshot(initialSnapshot),
+      updatedAt: Date.now()
+    })
+    annualReportYearsTaskByCacheKey.set(cacheKey, taskId)
+    persistAnnualReportYearsSnapshot(cacheKey, taskId, initialSnapshot)
 
     void (async () => {
       try {
         const result = await annualReportService.getAvailableYears({
-          dbPath: cfg.get('dbPath'),
-          decryptKey: cfg.get('decryptKey'),
-          wxid: cfg.get('myWxid'),
-          onProgress: (years) => {
+          dbPath,
+          decryptKey,
+          wxid,
+          nativeTimeoutMs: 5000,
+          onProgress: (progress) => {
             if (isYearsLoadCanceled(taskId)) return
-            sendProgress({ years, done: false })
+            const snapshot = updateTaskSnapshot({
+              ...progress,
+              done: false
+            })
+            if (!snapshot) return
+            broadcastAnnualReportYearsProgress(taskId, snapshot)
           },
           shouldCancel: () => isYearsLoadCanceled(taskId)
         })
 
         const canceled = isYearsLoadCanceled(taskId)
-        annualReportYearsLoadTasks.delete(taskId)
         if (canceled) {
-          sendProgress({ done: true, canceled: true })
+          const snapshot = updateTaskSnapshot({
+            done: true,
+            canceled: true,
+            phase: 'done',
+            statusText: '已取消年份加载'
+          })
+          if (snapshot) {
+            broadcastAnnualReportYearsProgress(taskId, snapshot)
+          }
           return
         }
 
-        if (result.success) {
-          sendProgress({ years: result.data || [], done: true })
-        } else {
-          sendProgress({ years: result.data || [], done: true, error: result.error || '加载年度数据失败' })
+        const completionPayload: AnnualReportYearsProgressPayload = result.success
+          ? {
+            years: result.data || [],
+            done: true,
+            strategy: result.meta?.strategy,
+            phase: 'done',
+            statusText: result.meta?.statusText || '年份数据加载完成',
+            nativeElapsedMs: result.meta?.nativeElapsedMs,
+            scanElapsedMs: result.meta?.scanElapsedMs,
+            totalElapsedMs: result.meta?.totalElapsedMs,
+            switched: result.meta?.switched,
+            nativeTimedOut: result.meta?.nativeTimedOut
+          }
+          : {
+            years: result.data || [],
+            done: true,
+            error: result.error || '加载年度数据失败',
+            strategy: result.meta?.strategy,
+            phase: 'done',
+            statusText: result.meta?.statusText || '年份数据加载失败',
+            nativeElapsedMs: result.meta?.nativeElapsedMs,
+            scanElapsedMs: result.meta?.scanElapsedMs,
+            totalElapsedMs: result.meta?.totalElapsedMs,
+            switched: result.meta?.switched,
+            nativeTimedOut: result.meta?.nativeTimedOut
+          }
+
+        const snapshot = updateTaskSnapshot(completionPayload)
+        if (snapshot) {
+          broadcastAnnualReportYearsProgress(taskId, snapshot)
         }
       } catch (e) {
+        const snapshot = updateTaskSnapshot({
+          done: true,
+          error: String(e),
+          phase: 'done',
+          statusText: '年份数据加载失败',
+          strategy: 'hybrid'
+        })
+        if (snapshot) {
+          broadcastAnnualReportYearsProgress(taskId, snapshot)
+        }
+      } finally {
+        const task = annualReportYearsLoadTasks.get(taskId)
+        if (task) {
+          annualReportYearsTaskByCacheKey.delete(task.cacheKey)
+        }
         annualReportYearsLoadTasks.delete(taskId)
-        sendProgress({ done: true, error: String(e) })
       }
     })()
 
-    return { success: true, taskId }
+    return {
+      success: true,
+      taskId,
+      reused: false,
+      snapshot: normalizeAnnualReportYearsSnapshot(initialSnapshot)
+    }
   })
 
   ipcMain.handle('annualReport:cancelAvailableYearsLoad', async (_, taskId: string) => {
