@@ -692,12 +692,10 @@ export interface ElectronAPI {
       estimatedSeconds: number
       sessions: Array<{ sessionId: string; displayName: string; totalCount: number; voiceCount: number }>
     }>
-    exportSessions: (sessionIds: string[], outputDir: string, options: ExportOptions, taskId?: string) => Promise<{
+    exportSessions: (sessionIds: string[], outputDir: string, options: ExportOptions) => Promise<{
       success: boolean
       successCount?: number
       failCount?: number
-      paused?: boolean
-      stopped?: boolean
       pendingSessionIds?: string[]
       successSessionIds?: string[]
       failedSessionIds?: string[]
@@ -712,8 +710,6 @@ export interface ElectronAPI {
       successCount?: number
       error?: string
     }>
-    pauseTask: (taskId: string) => Promise<{ success: boolean; error?: string }>
-    stopTask: (taskId: string) => Promise<{ success: boolean; error?: string }>
     onProgress: (callback: (payload: ExportProgress) => void) => () => void
   }
   whisper: {
@@ -767,8 +763,7 @@ export interface ElectronAPI {
       exportVideos?: boolean
       startTime?: number
       endTime?: number
-      taskId?: string
-    }) => Promise<{ success: boolean; filePath?: string; postCount?: number; mediaCount?: number; paused?: boolean; stopped?: boolean; error?: string }>
+    }) => Promise<{ success: boolean; filePath?: string; postCount?: number; mediaCount?: number; error?: string }>
     onExportProgress: (callback: (payload: { current: number; total: number; status: string }) => void) => () => void
     selectExportDir: () => Promise<{ canceled: boolean; filePath?: string }>
     getSnsUsernames: () => Promise<{ success: boolean; usernames?: string[]; error?: string }>

@@ -6331,15 +6331,15 @@ class ExportService {
               total: sessionIds.length,
               currentSession: sessionInfo.displayName,
               currentSessionId: sessionId,
-              phase: 'exporting',
+              phase: 'complete',
               phaseLabel: '该会话没有消息，已跳过'
             })
             return 'done'
           }
 
           if (emptySessionIds.has(sessionId)) {
-            failCount++
-            failedSessionIds.push(sessionId)
+            successCount++
+            successSessionIds.push(sessionId)
             activeSessionRatios.delete(sessionId)
             completedCount++
             onProgress?.({
@@ -6347,7 +6347,7 @@ class ExportService {
               total: sessionIds.length,
               currentSession: sessionInfo.displayName,
               currentSessionId: sessionId,
-              phase: 'exporting',
+              phase: 'complete',
               phaseLabel: '该会话没有消息，已跳过'
             })
             return 'done'
@@ -6419,7 +6419,7 @@ class ExportService {
                 total: sessionIds.length,
                 currentSession: sessionInfo.displayName,
                 currentSessionId: sessionId,
-                phase: 'exporting',
+                phase: 'complete',
                 phaseLabel: '无变化，已跳过'
               })
               return 'done'
@@ -6463,6 +6463,14 @@ class ExportService {
             failCount++
             failedSessionIds.push(sessionId)
             console.error(`导出 ${sessionId} 失败:`, result.error)
+            onProgress?.({
+              current: computeAggregateCurrent(),
+              total: sessionIds.length,
+              currentSession: sessionInfo.displayName,
+              currentSessionId: sessionId,
+              phase: 'complete',
+              phaseLabel: '导出失败'
+            })
           }
 
           activeSessionRatios.delete(sessionId)

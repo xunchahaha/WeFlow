@@ -95,11 +95,6 @@ let isDownloadInProgress = false
 let downloadProgressHandler: ((progress: any) => void) | null = null
 let downloadedHandler: (() => void) | null = null
 
-interface ExportTaskControlState {
-  pauseRequested: boolean
-  stopRequested: boolean
-}
-
 type AnnualReportYearsLoadStrategy = 'cache' | 'native' | 'hybrid'
 type AnnualReportYearsLoadPhase = 'cache' | 'native' | 'scan' | 'done'
 
@@ -126,30 +121,10 @@ interface AnnualReportYearsTaskState {
   updatedAt: number
 }
 
-const exportTaskControlMap = new Map<string, ExportTaskControlState>()
-const pendingExportTaskControlMap = new Map<string, ExportTaskControlState>()
 const annualReportYearsLoadTasks = new Map<string, AnnualReportYearsTaskState>()
 const annualReportYearsTaskByCacheKey = new Map<string, string>()
 const annualReportYearsSnapshotCache = new Map<string, { snapshot: AnnualReportYearsProgressPayload; updatedAt: number; taskId: string }>()
 const annualReportYearsSnapshotTtlMs = 10 * 60 * 1000
-
-const getTaskControlState = (taskId?: string): ExportTaskControlState | null => {
-  const normalized = typeof taskId === 'string' ? taskId.trim() : ''
-  if (!normalized) return null
-  return exportTaskControlMap.get(normalized) || null
-}
-
-const createTaskControlState = (taskId?: string): string | null => {
-  const normalized = typeof taskId === 'string' ? taskId.trim() : ''
-  if (!normalized) return null
-  const pending = pendingExportTaskControlMap.get(normalized)
-  exportTaskControlMap.set(normalized, {
-    pauseRequested: Boolean(pending?.pauseRequested),
-    stopRequested: Boolean(pending?.stopRequested)
-  })
-  pendingExportTaskControlMap.delete(normalized)
-  return normalized
-}
 
 const normalizeAnnualReportYearsSnapshot = (snapshot: AnnualReportYearsProgressPayload): AnnualReportYearsProgressPayload => {
   const years = Array.isArray(snapshot.years) ? [...snapshot.years] : []
@@ -210,22 +185,6 @@ const broadcastAnnualReportYearsProgress = (
 const isYearsLoadCanceled = (taskId: string): boolean => {
   const task = annualReportYearsLoadTasks.get(taskId)
   return task?.canceled === true
-}
-
-const clearTaskControlState = (taskId?: string): void => {
-  const normalized = typeof taskId === 'string' ? taskId.trim() : ''
-  if (!normalized) return
-  exportTaskControlMap.delete(normalized)
-  pendingExportTaskControlMap.delete(normalized)
-}
-
-const queueTaskControlRequest = (taskId: string, action: 'pause' | 'stop'): void => {
-  const normalized = taskId.trim()
-  if (!normalized) return
-  const existing = pendingExportTaskControlMap.get(normalized) || { pauseRequested: false, stopRequested: false }
-  if (action === 'pause') existing.pauseRequested = true
-  if (action === 'stop') existing.stopRequested = true
-  pendingExportTaskControlMap.set(normalized, existing)
 }
 
 function createWindow(options: { autoShow?: boolean } = {}) {
@@ -1269,27 +1228,17 @@ function registerIpcHandlers() {
   })
 
   ipcMain.handle('sns:exportTimeline', async (event, options: any) => {
-    const taskId = typeof options?.taskId === 'string' ? options.taskId : undefined
-    const controlId = createTaskControlState(taskId)
     const exportOptions = { ...(options || {}) }
     delete exportOptions.taskId
 
-    try {
-      return snsService.exportTimeline(
-        exportOptions,
-        (progress) => {
-          if (!event.sender.isDestroyed()) {
-            event.sender.send('sns:exportProgress', progress)
-          }
-        },
-        {
-          shouldPause: () => Boolean(getTaskControlState(controlId || undefined)?.pauseRequested),
-          shouldStop: () => Boolean(getTaskControlState(controlId || undefined)?.stopRequested)
+    return snsService.exportTimeline(
+      exportOptions,
+      (progress) => {
+        if (!event.sender.isDestroyed()) {
+          event.sender.send('sns:exportProgress', progress)
         }
-      )
-    } finally {
-      clearTaskControlState(controlId || undefined)
-    }
+      }
+    )
   })
 
   ipcMain.handle('sns:selectExportDir', async () => {
@@ -1412,42 +1361,14 @@ function registerIpcHandlers() {
     return exportService.getExportStats(sessionIds, options)
   })
 
-  ipcMain.handle('export:exportSessions', async (event, sessionIds: string[], outputDir: string, options: ExportOptions, taskId?: string) => {
-    const controlId = createTaskControlState(taskId)
+  ipcMain.handle('export:exportSessions', async (event, sessionIds: string[], outputDir: string, options: ExportOptions) => {
     const onProgress = (progress: ExportProgress) => {
       if (!event.sender.isDestroyed()) {
         event.sender.send('export:progress', progress)
       }
     }
 
-    try {
-      return exportService.exportSessions(sessionIds, outputDir, options, onProgress, {
-        shouldPause: () => Boolean(getTaskControlState(controlId || undefined)?.pauseRequested),
-        shouldStop: () => Boolean(getTaskControlState(controlId || undefined)?.stopRequested)
-      })
-    } finally {
-      clearTaskControlState(controlId || undefined)
-    }
-  })
-
-  ipcMain.handle('export:pauseTask', async (_, taskId: string) => {
-    const state = getTaskControlState(taskId)
-    if (!state) {
-      queueTaskControlRequest(taskId, 'pause')
-      return { success: true, queued: true }
-    }
-    state.pauseRequested = true
-    return { success: true }
-  })
-
-  ipcMain.handle('export:stopTask', async (_, taskId: string) => {
-    const state = getTaskControlState(taskId)
-    if (!state) {
-      queueTaskControlRequest(taskId, 'stop')
-      return { success: true, queued: true }
-    }
-    state.stopRequested = true
-    return { success: true }
+    return exportService.exportSessions(sessionIds, outputDir, options, onProgress)
   })
 
   ipcMain.handle('export:exportSession', async (_, sessionId: string, outputPath: string, options: ExportOptions) => {

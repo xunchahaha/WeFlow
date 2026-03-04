@@ -40,8 +40,7 @@ import { useContactTypeCountsStore } from '../stores/contactTypeCountsStore'
 import './ExportPage.scss'
 
 type ConversationTab = 'private' | 'group' | 'official' | 'former_friend'
-type TaskStatus = 'queued' | 'running' | 'paused' | 'stopped' | 'success' | 'error'
-type TaskControlState = 'pausing' | 'stopping'
+type TaskStatus = 'queued' | 'running' | 'success' | 'error'
 type TaskScope = 'single' | 'multi' | 'content' | 'sns'
 type ContentType = 'text' | 'voice' | 'image' | 'video' | 'emoji'
 type ContentCardType = ContentType | 'sns'
@@ -124,7 +123,6 @@ interface ExportTask {
   id: string
   title: string
   status: TaskStatus
-  controlState?: TaskControlState
   createdAt: number
   startedAt?: number
   finishedAt?: number
@@ -353,13 +351,7 @@ const formatDurationMs = (ms: number): string => {
 
 const getTaskStatusLabel = (task: ExportTask): string => {
   if (task.status === 'queued') return '排队中'
-  if (task.status === 'running') {
-    if (task.controlState === 'pausing') return '暂停中'
-    if (task.controlState === 'stopping') return '停止中'
-    return '进行中'
-  }
-  if (task.status === 'paused') return '已暂停'
-  if (task.status === 'stopped') return '已停止'
+  if (task.status === 'running') return '进行中'
   if (task.status === 'success') return '已完成'
   return '失败'
 }
@@ -429,6 +421,7 @@ const parseDateInput = (value: string, endOfDay: boolean): Date => {
 
 const toKindByContactType = (session: AppChatSession, contact?: ContactInfo): ConversationTab => {
   if (session.username.endsWith('@chatroom')) return 'group'
+  if (session.username.startsWith('gh_')) return 'official'
   if (contact?.type === 'official') return 'official'
   if (contact?.type === 'former_friend') return 'former_friend'
   return 'private'
@@ -444,6 +437,13 @@ const toKindByContact = (contact: ContactInfo): ConversationTab => {
 const isContentScopeSession = (session: SessionRow): boolean => (
   session.kind === 'private' || session.kind === 'group' || session.kind === 'former_friend'
 )
+
+const exportKindPriority: Record<ConversationTab, number> = {
+  private: 0,
+  group: 1,
+  former_friend: 2,
+  official: 3
+}
 
 const getAvatarLetter = (name: string): string => {
   if (!name) return '?'
@@ -2277,7 +2277,6 @@ function ExportPage() {
     updateTask(next.id, task => ({
       ...task,
       status: 'running',
-      controlState: undefined,
       startedAt: Date.now(),
       finishedAt: undefined,
       error: undefined,
@@ -2338,41 +2337,15 @@ function ExportPage() {
           exportLivePhotos: snsOptions.exportLivePhotos,
           exportVideos: snsOptions.exportVideos,
           startTime: snsOptions.startTime,
-          endTime: snsOptions.endTime,
-          taskId: next.id
+          endTime: snsOptions.endTime
         })
 
         if (!result.success) {
           updateTask(next.id, task => ({
             ...task,
             status: 'error',
-            controlState: undefined,
             finishedAt: Date.now(),
             error: result.error || '朋友圈导出失败',
-            performance: finalizeTaskPerformance(task, Date.now())
-          }))
-        } else if (result.stopped) {
-          updateTask(next.id, task => ({
-            ...task,
-            status: 'stopped',
-            controlState: undefined,
-            finishedAt: Date.now(),
-            progress: {
-              ...task.progress,
-              phaseLabel: '已停止'
-            },
-            performance: finalizeTaskPerformance(task, Date.now())
-          }))
-        } else if (result.paused) {
-          updateTask(next.id, task => ({
-            ...task,
-            status: 'paused',
-            controlState: undefined,
-            finishedAt: Date.now(),
-            progress: {
-              ...task.progress,
-              phaseLabel: '已暂停'
-            },
             performance: finalizeTaskPerformance(task, Date.now())
           }))
         } else {
@@ -2386,7 +2359,6 @@ function ExportPage() {
           updateTask(next.id, task => ({
             ...task,
             status: 'success',
-            controlState: undefined,
             finishedAt: doneAt,
             progress: {
               ...task.progress,
@@ -2407,23 +2379,19 @@ function ExportPage() {
         const result = await window.electronAPI.export.exportSessions(
           next.payload.sessionIds,
           next.payload.outputDir,
-          next.payload.options,
-          next.id
+          next.payload.options
         )
 
         if (!result.success) {
           updateTask(next.id, task => ({
             ...task,
             status: 'error',
-            controlState: undefined,
             finishedAt: Date.now(),
             error: result.error || '导出失败',
             performance: finalizeTaskPerformance(task, Date.now())
           }))
         } else {
           const doneAt = Date.now()
-          const successCount = result.successCount ?? 0
-          const failCount = result.failCount ?? 0
           const contentTypes = next.payload.contentType
             ? [next.payload.contentType]
             : inferContentTypesFromOptions(next.payload.options)
@@ -2435,83 +2403,20 @@ function ExportPage() {
             markContentExported(successSessionIds, contentTypes, doneAt)
           }
 
-          if (result.stopped) {
-            updateTask(next.id, task => ({
-              ...task,
-              status: 'stopped',
-                controlState: undefined,
-                finishedAt: doneAt,
-                progress: {
-                  ...task.progress,
-                  current: successCount + failCount,
-                  total: task.progress.total || next.payload.sessionIds.length,
-                  phaseLabel: '已停止'
-                },
-                performance: finalizeTaskPerformance(task, doneAt)
-              }))
-          } else if (result.paused) {
-            const pendingSessionIds = Array.isArray(result.pendingSessionIds)
-              ? result.pendingSessionIds
-              : []
-            const sessionNameMap = new Map<string, string>()
-            next.payload.sessionIds.forEach((sessionId, index) => {
-              sessionNameMap.set(sessionId, next.payload.sessionNames[index] || sessionId)
-            })
-            const pendingSessionNames = pendingSessionIds.map(sessionId => sessionNameMap.get(sessionId) || sessionId)
-
-            if (pendingSessionIds.length === 0) {
-              updateTask(next.id, task => ({
-                ...task,
-                status: 'success',
-                controlState: undefined,
-                finishedAt: doneAt,
-                progress: {
-                  ...task.progress,
-                  current: task.progress.total || next.payload.sessionIds.length,
-                  total: task.progress.total || next.payload.sessionIds.length,
-                  phaseLabel: '完成',
-                  phaseProgress: 1,
-                  phaseTotal: 1
-                },
-                performance: finalizeTaskPerformance(task, doneAt)
-              }))
-            } else {
-              updateTask(next.id, task => ({
-                ...task,
-                status: 'paused',
-                controlState: undefined,
-                finishedAt: doneAt,
-                payload: {
-                  ...task.payload,
-                  sessionIds: pendingSessionIds,
-                  sessionNames: pendingSessionNames
-                },
-                progress: {
-                  ...task.progress,
-                  current: successCount + failCount,
-                  total: task.progress.total || next.payload.sessionIds.length,
-                  phaseLabel: '已暂停'
-                },
-                performance: finalizeTaskPerformance(task, doneAt)
-              }))
-            }
-          } else {
-            updateTask(next.id, task => ({
-              ...task,
-              status: 'success',
-              controlState: undefined,
-              finishedAt: doneAt,
-              progress: {
-                ...task.progress,
-                current: task.progress.total || next.payload.sessionIds.length,
-                total: task.progress.total || next.payload.sessionIds.length,
-                phaseLabel: '完成',
-                phaseProgress: 1,
-                phaseTotal: 1
-              },
-              performance: finalizeTaskPerformance(task, doneAt)
-            }))
-          }
+          updateTask(next.id, task => ({
+            ...task,
+            status: 'success',
+            finishedAt: doneAt,
+            progress: {
+              ...task.progress,
+              current: task.progress.total || next.payload.sessionIds.length,
+              total: task.progress.total || next.payload.sessionIds.length,
+              phaseLabel: '完成',
+              phaseProgress: 1,
+              phaseTotal: 1
+            },
+            performance: finalizeTaskPerformance(task, doneAt)
+          }))
         }
       }
     } catch (error) {
@@ -2519,7 +2424,6 @@ function ExportPage() {
       updateTask(next.id, task => ({
         ...task,
         status: 'error',
-        controlState: undefined,
         finishedAt: doneAt,
         error: String(error),
         performance: finalizeTaskPerformance(task, doneAt)
@@ -2542,91 +2446,6 @@ function ExportPage() {
       progressUnsubscribeRef.current = null
     }
   }, [])
-
-  const pauseTask = useCallback(async (taskId: string) => {
-    const target = tasksRef.current.find(task => task.id === taskId)
-    if (!target) return
-
-    if (target.status === 'queued') {
-      updateTask(taskId, task => ({
-        ...task,
-        status: 'paused',
-        controlState: undefined,
-        performance: finalizeTaskPerformance(task, Date.now())
-      }))
-      return
-    }
-
-    if (target.status !== 'running') return
-
-    updateTask(taskId, task => (
-      task.status === 'running'
-        ? { ...task, controlState: 'pausing' }
-        : task
-    ))
-
-    const result = await window.electronAPI.export.pauseTask(taskId)
-    if (!result.success) {
-      updateTask(taskId, task => (
-        task.status === 'running'
-          ? { ...task, controlState: undefined }
-          : task
-      ))
-      window.alert(result.error || '暂停任务失败，请重试')
-    }
-  }, [updateTask])
-
-  const resumeTask = useCallback((taskId: string) => {
-    updateTask(taskId, task => {
-      if (task.status !== 'paused') return task
-      return {
-        ...task,
-        status: 'queued',
-        controlState: undefined
-      }
-    })
-  }, [updateTask])
-
-  const stopTask = useCallback(async (taskId: string) => {
-    const target = tasksRef.current.find(task => task.id === taskId)
-    if (!target) return
-    const shouldStop = window.confirm('确认停止该导出任务吗？')
-    if (!shouldStop) return
-
-    if (target.status === 'queued' || target.status === 'paused') {
-      const doneAt = Date.now()
-      updateTask(taskId, task => ({
-        ...task,
-        status: 'stopped',
-        controlState: undefined,
-        finishedAt: doneAt,
-        progress: {
-          ...task.progress,
-          phaseLabel: '已停止'
-        },
-        performance: finalizeTaskPerformance(task, doneAt)
-      }))
-      return
-    }
-
-    if (target.status !== 'running') return
-
-    updateTask(taskId, task => (
-      task.status === 'running'
-        ? { ...task, controlState: 'stopping' }
-        : task
-    ))
-
-    const result = await window.electronAPI.export.stopTask(taskId)
-    if (!result.success) {
-      updateTask(taskId, task => (
-        task.status === 'running'
-          ? { ...task, controlState: undefined }
-          : task
-      ))
-      window.alert(result.error || '停止任务失败，请重试')
-    }
-  }, [updateTask])
 
   const createTask = async () => {
     if (!exportDialog.open || !exportFolder) return
@@ -2688,12 +2507,45 @@ function ExportPage() {
     })
   }
 
+  const resolveSessionExistingMessageCount = useCallback((session: SessionRow): number => {
+    const counted = normalizeMessageCount(sessionMessageCounts[session.username])
+    if (typeof counted === 'number') return counted
+    const hinted = normalizeMessageCount(session.messageCountHint)
+    if (typeof hinted === 'number') return hinted
+    return 0
+  }, [sessionMessageCounts])
+
+  const orderSessionsForExport = useCallback((source: SessionRow[]): SessionRow[] => {
+    return source
+      .filter((session) => session.hasSession && isContentScopeSession(session))
+      .map((session) => ({
+        session,
+        count: resolveSessionExistingMessageCount(session)
+      }))
+      .filter((item) => item.count > 0)
+      .sort((a, b) => {
+        const kindDiff = exportKindPriority[a.session.kind] - exportKindPriority[b.session.kind]
+        if (kindDiff !== 0) return kindDiff
+        if (a.count !== b.count) return b.count - a.count
+        const tsA = a.session.sortTimestamp || a.session.lastTimestamp || 0
+        const tsB = b.session.sortTimestamp || b.session.lastTimestamp || 0
+        if (tsA !== tsB) return tsB - tsA
+        return (a.session.displayName || a.session.username)
+          .localeCompare(b.session.displayName || b.session.username, 'zh-Hans-CN')
+      })
+      .map((item) => item.session)
+  }, [resolveSessionExistingMessageCount])
+
   const openBatchExport = () => {
-    const selectable = new Set(sessions.filter(session => session.hasSession).map(session => session.username))
-    const ids = Array.from(selectedSessions).filter(id => selectable.has(id))
-    if (ids.length === 0) return
-    const nameMap = new Map(sessions.map(session => [session.username, session.displayName || session.username]))
-    const names = ids.map(id => nameMap.get(id) || id)
+    const selectedSet = new Set(selectedSessions)
+    const selectedRows = sessions.filter((session) => selectedSet.has(session.username))
+    const orderedRows = orderSessionsForExport(selectedRows)
+    if (orderedRows.length === 0) {
+      window.alert('所选会话暂无可导出的消息（总消息数为 0）')
+      return
+    }
+    const ids = orderedRows.map((session) => session.username)
+    const names = orderedRows.map((session) => session.displayName || session.username)
 
     openExportDialog({
       scope: 'multi',
@@ -2704,13 +2556,13 @@ function ExportPage() {
   }
 
   const openContentExport = (contentType: ContentType) => {
-    const ids = sessions
-      .filter(session => session.hasSession && isContentScopeSession(session))
-      .map(session => session.username)
-
-    const names = sessions
-      .filter(session => session.hasSession && isContentScopeSession(session))
-      .map(session => session.displayName || session.username)
+    const orderedRows = orderSessionsForExport(sessions)
+    if (orderedRows.length === 0) {
+      window.alert('当前会话列表暂无可导出的消息（总消息数为 0）')
+      return
+    }
+    const ids = orderedRows.map((session) => session.username)
+    const names = orderedRows.map((session) => session.displayName || session.username)
 
     openExportDialog({
       scope: 'content',
@@ -2745,17 +2597,6 @@ function ExportPage() {
     const set = new Set<string>()
     for (const task of tasks) {
       if (task.status !== 'queued') continue
-      for (const id of task.payload.sessionIds) {
-        set.add(id)
-      }
-    }
-    return set
-  }, [tasks])
-
-  const pausedSessionIds = useMemo(() => {
-    const set = new Set<string>()
-    for (const task of tasks) {
-      if (task.status !== 'paused') continue
       for (const id of task.payload.sessionIds) {
         set.add(id)
       }
@@ -3567,7 +3408,6 @@ function ExportPage() {
 
     const isRunning = runningSessionIds.has(session.username)
     const isQueued = queuedSessionIds.has(session.username)
-    const isPaused = pausedSessionIds.has(session.username)
     const recent = formatRecentExportTime(lastExportBySession[session.username], nowTick)
 
     return (
@@ -3580,8 +3420,8 @@ function ExportPage() {
             详情
           </button>
           <button
-            className={`row-export-btn ${isRunning ? 'running' : ''} ${isPaused ? 'paused' : ''}`}
-            disabled={isRunning || isPaused}
+            className={`row-export-btn ${isRunning ? 'running' : ''}`}
+            disabled={isRunning}
             onClick={() => openSingleExport(session)}
           >
             {isRunning ? (
@@ -3589,7 +3429,7 @@ function ExportPage() {
                 <Loader2 size={14} className="spin" />
                 导出中
               </>
-            ) : isPaused ? '已暂停' : isQueued ? '排队中' : '导出'}
+            ) : isQueued ? '排队中' : '导出'}
           </button>
         </div>
         {recent && <span className="row-export-time">{recent}</span>}
@@ -3668,7 +3508,6 @@ function ExportPage() {
   const isSnsCardStatsLoading = !hasSeededSnsStats
   const taskRunningCount = tasks.filter(task => task.status === 'running').length
   const taskQueuedCount = tasks.filter(task => task.status === 'queued').length
-  const taskPausedCount = tasks.filter(task => task.status === 'paused').length
   const showInitialSkeleton = isLoading && sessions.length === 0
   const chooseExportFolder = useCallback(async () => {
     const result = await window.electronAPI.dialog.openFile({
@@ -3722,7 +3561,6 @@ function ExportPage() {
               <div className="task-summary">
                 <span>进行中 {taskRunningCount}</span>
                 <span>排队 {taskQueuedCount}</span>
-                <span>暂停 {taskPausedCount}</span>
                 <span>总计 {tasks.length}</span>
               </div>
               <button
@@ -3756,7 +3594,7 @@ function ExportPage() {
             <div className="task-center-modal-header">
               <div className="task-center-modal-title">
                 <h3>任务中心</h3>
-                <span>进行中 {taskRunningCount} · 排队 {taskQueuedCount} · 暂停 {taskPausedCount} · 总计 {tasks.length}</span>
+                <span>进行中 {taskRunningCount} · 排队 {taskQueuedCount} · 总计 {tasks.length}</span>
               </div>
               <button
                 className="close-icon-btn"
@@ -3795,14 +3633,14 @@ function ExportPage() {
                       ? Math.max(0, Math.min(1, task.progress.phaseProgress / task.progress.phaseTotal))
                       : null
                     return (
-                      <div key={task.id} className={`task-card ${task.status} ${task.controlState ? `request-${task.controlState}` : ''}`}>
+                      <div key={task.id} className={`task-card ${task.status}`}>
                         <div className="task-main">
                           <div className="task-title">{task.title}</div>
                           <div className="task-meta">
                             <span className={`task-status ${task.status}`}>{getTaskStatusLabel(task)}</span>
                             <span>{new Date(task.createdAt).toLocaleString('zh-CN')}</span>
                           </div>
-                          {(task.status === 'running' || task.status === 'paused') && (
+                          {task.status === 'running' && (
                             <>
                               <div className="task-progress-bar">
                                 <div
@@ -3880,35 +3718,6 @@ function ExportPage() {
                               onClick={() => setExpandedPerfTaskId(prev => (prev === task.id ? null : task.id))}
                             >
                               {isPerfExpanded ? '收起详情' : '性能详情'}
-                            </button>
-                          )}
-                          {(task.status === 'running' || task.status === 'queued') && (
-                            <button
-                              className="task-action-btn"
-                              type="button"
-                              onClick={() => void pauseTask(task.id)}
-                              disabled={task.status === 'running' && task.controlState === 'pausing'}
-                            >
-                              {task.status === 'running' && task.controlState === 'pausing' ? '暂停中' : '暂停'}
-                            </button>
-                          )}
-                          {task.status === 'paused' && (
-                            <button
-                              className="task-action-btn primary"
-                              type="button"
-                              onClick={() => resumeTask(task.id)}
-                            >
-                              继续
-                            </button>
-                          )}
-                          {(task.status === 'running' || task.status === 'queued' || task.status === 'paused') && (
-                            <button
-                              className="task-action-btn danger"
-                              type="button"
-                              onClick={() => void stopTask(task.id)}
-                              disabled={task.status === 'running' && task.controlState === 'stopping'}
-                            >
-                              {task.status === 'running' && task.controlState === 'stopping' ? '停止中' : '停止'}
                             </button>
                           )}
                           <button className="task-action-btn" onClick={() => task.payload.outputDir && void window.electronAPI.shell.openPath(task.payload.outputDir)}>
@@ -4253,7 +4062,6 @@ function ExportPage() {
                       const canExport = Boolean(matchedSession?.hasSession)
                       const isRunning = canExport && runningSessionIds.has(contact.username)
                       const isQueued = canExport && queuedSessionIds.has(contact.username)
-                      const isPaused = canExport && pausedSessionIds.has(contact.username)
                       const recent = canExport ? formatRecentExportTime(lastExportBySession[contact.username], nowTick) : ''
                       const countedMessages = normalizeMessageCount(sessionMessageCounts[contact.username])
                       const hintedMessages = normalizeMessageCount(matchedSession?.messageCountHint)
@@ -4300,8 +4108,8 @@ function ExportPage() {
                                   详情
                                 </button>
                                 <button
-                                  className={`row-export-btn ${isRunning ? 'running' : ''} ${isPaused ? 'paused' : ''} ${!canExport ? 'no-session' : ''}`}
-                                  disabled={!canExport || isRunning || isPaused}
+                                  className={`row-export-btn ${isRunning ? 'running' : ''} ${!canExport ? 'no-session' : ''}`}
+                                  disabled={!canExport || isRunning}
                                   onClick={() => {
                                     if (!matchedSession || !matchedSession.hasSession) return
                                     openSingleExport({
@@ -4315,7 +4123,7 @@ function ExportPage() {
                                       <Loader2 size={14} className="spin" />
                                       导出中
                                     </>
-                                  ) : !canExport ? '暂无会话' : isPaused ? '已暂停' : isQueued ? '排队中' : '导出'}
+                                  ) : !canExport ? '暂无会话' : isQueued ? '排队中' : '导出'}
                                 </button>
                               </div>
                               {recent && <span className="row-export-time">{recent}</span>}
