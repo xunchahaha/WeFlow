@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useState, useRef, useCallback, useMemo } from 'react'
-import { RefreshCw, Search, X, Download, FolderOpen, FileJson, FileText, Image, CheckCircle, AlertCircle, Calendar, Users, Info, ChevronLeft, ChevronRight, Shield, ShieldOff } from 'lucide-react'
+import { RefreshCw, Search, X, Download, FolderOpen, FileJson, FileText, Image, CheckCircle, AlertCircle, Calendar, Users, Info, ChevronLeft, ChevronRight, Shield, ShieldOff, Loader2 } from 'lucide-react'
 import JumpToDateDialog from '../components/JumpToDateDialog'
 import './SnsPage.scss'
 import { SnsPost } from '../types/sns'
@@ -274,18 +274,16 @@ export default function SnsPage() {
     }, [authorTimelineTarget, contacts])
 
     const myTimelineCount = useMemo(() => {
-        if (typeof overviewStats.myPosts === 'number' && Number.isFinite(overviewStats.myPosts) && overviewStats.myPosts >= 0) {
-            return Math.floor(overviewStats.myPosts)
-        }
         if (resolvedCurrentUserContact?.postCountStatus === 'ready' && typeof resolvedCurrentUserContact.postCount === 'number') {
             return normalizePostCount(resolvedCurrentUserContact.postCount)
         }
         return null
-    }, [normalizePostCount, overviewStats.myPosts, resolvedCurrentUserContact])
+    }, [normalizePostCount, resolvedCurrentUserContact])
 
     const myTimelineCountLoading = Boolean(
-        overviewStatsStatus === 'loading'
-        || resolvedCurrentUserContact?.postCountStatus === 'loading'
+        resolvedCurrentUserContact
+            ? resolvedCurrentUserContact.postCountStatus !== 'ready'
+            : overviewStatsStatus === 'loading' || contactsLoading
     )
 
     const openCurrentUserTimeline = useCallback(() => {
@@ -980,7 +978,7 @@ export default function SnsPage() {
                                     {myTimelineCount !== null
                                         ? `${myTimelineCount.toLocaleString('zh-CN')} 条`
                                         : myTimelineCountLoading
-                                            ? '...'
+                                            ? <Loader2 size={14} className="spin" aria-hidden="true" />
                                             : '--'}
                                 </span>
                             </button>

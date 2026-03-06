@@ -101,6 +101,12 @@
         .feed-my-timeline-count {
             color: var(--text-primary);
             font-weight: 600;
+            display: inline-flex;
+            align-items: center;
+
+            .spin {
+                animation: spin 0.8s linear infinite;
+            }
         }
 
         &.ready {

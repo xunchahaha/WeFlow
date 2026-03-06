@@ -441,6 +441,14 @@ export function ContactSnsTimelineDialog({
     timelineLoadingMore
   ])
 
+  const handleBodyScroll = useCallback((event: React.UIEvent<HTMLDivElement>) => {
+    const element = event.currentTarget
+    const remaining = element.scrollHeight - element.scrollTop - element.clientHeight
+    if (remaining <= 160) {
+      loadMore()
+    }
+  }, [loadMore])
+
   const toggleRankMode = useCallback((mode: ContactSnsRankMode) => {
     setRankMode((previous) => (previous === mode ? null : mode))
   }, [])
@@ -534,7 +542,10 @@ export function ContactSnsTimelineDialog({
           在微信桌面客户端中打开这个人的朋友圈浏览，可快速把其朋友圈同步到这里。若你在乎这个人，一定要试试～
         </div>
 
-        <div className="contact-sns-dialog-body">
+        <div
+          className="contact-sns-dialog-body"
+          onScroll={handleBodyScroll}
+        >
           {timelinePosts.length > 0 && (
             <div className="contact-sns-dialog-posts-list">
               {timelinePosts.map((post) => (
