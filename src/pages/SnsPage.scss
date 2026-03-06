@@ -1074,68 +1074,15 @@
         }
     }
 
-    /* Date Widget */
-    .date-widget-row {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        min-width: 0;
-    }
-
-    .date-widget .widget-header {
-        margin-bottom: 0;
-        flex-shrink: 0;
-        min-width: 72px;
-    }
-
     .jump-calendar-anchor {
         position: relative;
         display: flex;
         align-items: center;
-        flex: 1;
-        min-width: 0;
         isolation: isolate;
         z-index: 20;
 
         .jump-date-popover {
             z-index: 2600;
-        }
-    }
-
-    .date-picker-trigger {
-        width: 100%;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        background: var(--bg-tertiary);
-        border: 1px solid transparent;
-        border-radius: var(--sns-border-radius-sm);
-        padding: 12px;
-        cursor: pointer;
-        transition: all 0.2s;
-        font-size: 13px;
-        color: var(--text-secondary);
-
-        &:hover {
-            background: var(--bg-primary);
-            border-color: var(--primary);
-        }
-
-        &.active {
-            background: rgba(var(--primary-rgb), 0.08);
-            border-color: var(--primary);
-            color: var(--primary);
-            font-weight: 500;
-        }
-
-        .clear-date-btn {
-            padding: 4px;
-            display: flex;
-            color: var(--primary);
-
-            &:hover {
-                transform: scale(1.1);
-            }
         }
     }
 

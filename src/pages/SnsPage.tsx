@@ -6,6 +6,7 @@ import { SnsPostItem } from '../components/Sns/SnsPostItem'
 import { SnsFilterPanel } from '../components/Sns/SnsFilterPanel'
 import { ContactSnsTimelineDialog } from '../components/Sns/ContactSnsTimelineDialog'
 import type { ContactSnsTimelineTarget } from '../components/Sns/contactSnsTimeline'
+import JumpToDatePopover from '../components/JumpToDatePopover'
 import * as configService from '../services/config'
 
 const SNS_PAGE_CACHE_TTL_MS = 24 * 60 * 60 * 1000
@@ -119,6 +120,12 @@ export default function SnsPage() {
     // UI states
     const [debugPost, setDebugPost] = useState<SnsPost | null>(null)
     const [authorTimelineTarget, setAuthorTimelineTarget] = useState<ContactSnsTimelineTarget | null>(null)
+    const [showJumpPopover, setShowJumpPopover] = useState(false)
+    const [jumpPopoverDate, setJumpPopoverDate] = useState<Date>(jumpTargetDate || new Date())
+    const [jumpDateCounts, setJumpDateCounts] = useState<Record<string, number>>({})
+    const [jumpDateMessageDates, setJumpDateMessageDates] = useState<Set<string>>(new Set())
+    const [hasLoadedJumpDateCounts, setHasLoadedJumpDateCounts] = useState(false)
+    const [loadingJumpDateCounts, setLoadingJumpDateCounts] = useState(false)
 
     // 导出相关状态
     const [showExportDialog, setShowExportDialog] = useState(false)
@@ -142,6 +149,7 @@ export default function SnsPage() {
     const [triggerMessage, setTriggerMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
     const postsContainerRef = useRef<HTMLDivElement>(null)
+    const jumpCalendarWrapRef = useRef<HTMLDivElement | null>(null)
     const [hasNewer, setHasNewer] = useState(false)
     const [loadingNewer, setLoadingNewer] = useState(false)
     const postsRef = useRef<SnsPost[]>([])
@@ -157,6 +165,8 @@ export default function SnsPage() {
     const contactsLoadTokenRef = useRef(0)
     const contactsCountHydrationTokenRef = useRef(0)
     const contactsCountBatchTimerRef = useRef<number | null>(null)
+    const jumpDateCountsCacheRef = useRef<Map<string, Record<string, number>>>(new Map())
+    const jumpDateRequestSeqRef = useRef(0)
 
     // Sync posts ref
     useEffect(() => {
@@ -180,6 +190,21 @@ export default function SnsPage() {
     useEffect(() => {
         jumpTargetDateRef.current = jumpTargetDate
     }, [jumpTargetDate])
+    useEffect(() => {
+        if (!showJumpPopover) {
+            setJumpPopoverDate(jumpTargetDate || new Date())
+        }
+    }, [jumpTargetDate, showJumpPopover])
+    useEffect(() => {
+        if (!showJumpPopover) return
+        const handleClickOutside = (event: MouseEvent) => {
+            if (!jumpCalendarWrapRef.current) return
+            if (jumpCalendarWrapRef.current.contains(event.target as Node)) return
+            setShowJumpPopover(false)
+        }
+        document.addEventListener('mousedown', handleClickOutside)
+        return () => document.removeEventListener('mousedown', handleClickOutside)
+    }, [showJumpPopover])
     // 在 DOM 更新后、浏览器绘制前同步调整滚动位置，防止向上加载时页面跳动
     useLayoutEffect(() => {
         const snapshot = scrollAdjustmentRef.current;
@@ -220,6 +245,78 @@ export default function SnsPage() {
         if (!Number.isFinite(numeric)) return 0
         return Math.max(0, Math.floor(numeric))
     }, [])
+
+    const toMonthKey = useCallback((date: Date) => {
+        return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
+    }, [])
+
+    const toDateKey = useCallback((timestampSeconds: number) => {
+        const date = new Date(timestampSeconds * 1000)
+        const year = date.getFullYear()
+        const month = String(date.getMonth() + 1).padStart(2, '0')
+        const day = String(date.getDate()).padStart(2, '0')
+        return `${year}-${month}-${day}`
+    }, [])
+
+    const applyJumpDateCounts = useCallback((counts: Record<string, number>) => {
+        setJumpDateCounts(counts)
+        setJumpDateMessageDates(new Set(Object.keys(counts)))
+        setHasLoadedJumpDateCounts(true)
+    }, [])
+
+    const loadJumpDateCounts = useCallback(async (monthDate: Date) => {
+        const monthKey = toMonthKey(monthDate)
+        const cached = jumpDateCountsCacheRef.current.get(monthKey)
+        if (cached) {
+            applyJumpDateCounts(cached)
+            setLoadingJumpDateCounts(false)
+            return
+        }
+
+        const requestSeq = ++jumpDateRequestSeqRef.current
+        setLoadingJumpDateCounts(true)
+        setHasLoadedJumpDateCounts(false)
+
+        const year = monthDate.getFullYear()
+        const month = monthDate.getMonth()
+        const monthStart = new Date(year, month, 1, 0, 0, 0, 0)
+        const monthEnd = new Date(year, month + 1, 0, 23, 59, 59, 999)
+        const startTime = Math.floor(monthStart.getTime() / 1000)
+        const endTime = Math.floor(monthEnd.getTime() / 1000)
+        const pageSize = 200
+        let offset = 0
+        const counts: Record<string, number> = {}
+
+        try {
+            while (true) {
+                const result = await window.electronAPI.sns.getTimeline(pageSize, offset, [], '', startTime, endTime)
+                if (!result?.success || !Array.isArray(result.timeline) || result.timeline.length === 0) {
+                    break
+                }
+                result.timeline.forEach((post) => {
+                    const key = toDateKey(Number(post.createTime || 0))
+                    if (!key) return
+                    counts[key] = (counts[key] || 0) + 1
+                })
+                if (result.timeline.length < pageSize) break
+                offset += pageSize
+            }
+
+            if (requestSeq !== jumpDateRequestSeqRef.current) return
+            jumpDateCountsCacheRef.current.set(monthKey, counts)
+            applyJumpDateCounts(counts)
+        } catch (error) {
+            console.error('加载朋友圈按日条数失败:', error)
+            if (requestSeq !== jumpDateRequestSeqRef.current) return
+            setJumpDateCounts({})
+            setJumpDateMessageDates(new Set())
+            setHasLoadedJumpDateCounts(true)
+        } finally {
+            if (requestSeq === jumpDateRequestSeqRef.current) {
+                setLoadingJumpDateCounts(false)
+            }
+        }
+    }, [applyJumpDateCounts, toDateKey, toMonthKey])
 
     const compareContactsForRanking = useCallback((a: Contact, b: Contact): number => {
         const aReady = a.postCountStatus === 'ready'
@@ -985,6 +1082,42 @@ export default function SnsPage() {
                             </div>
                         </div>
                         <div className="header-actions">
+                            <div className="jump-calendar-anchor" ref={jumpCalendarWrapRef}>
+                                <button
+                                    type="button"
+                                    className={`icon-btn ${showJumpPopover ? 'active' : ''}`}
+                                    title={jumpTargetDate
+                                        ? jumpTargetDate.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })
+                                        : '时间跳转'}
+                                    onClick={() => {
+                                        if (!showJumpPopover) {
+                                            const nextDate = jumpTargetDate || new Date()
+                                            setJumpPopoverDate(nextDate)
+                                            void loadJumpDateCounts(nextDate)
+                                        }
+                                        setShowJumpPopover(prev => !prev)
+                                    }}
+                                >
+                                    <Calendar size={20} />
+                                </button>
+                                <JumpToDatePopover
+                                    isOpen={showJumpPopover}
+                                    currentDate={jumpPopoverDate}
+                                    onClose={() => setShowJumpPopover(false)}
+                                    onMonthChange={(date) => {
+                                        setJumpPopoverDate(date)
+                                        void loadJumpDateCounts(date)
+                                    }}
+                                    onSelect={(date) => {
+                                        setJumpPopoverDate(date)
+                                        setJumpTargetDate(date)
+                                    }}
+                                    messageDates={jumpDateMessageDates}
+                                    hasLoadedMessageDates={hasLoadedJumpDateCounts}
+                                    messageDateCounts={jumpDateCounts}
+                                    loadingDateCounts={loadingJumpDateCounts}
+                                />
+                            </div>
                             <button
                                 onClick={async () => {
                                     setTriggerMessage(null)
@@ -1110,8 +1243,6 @@ export default function SnsPage() {
             <SnsFilterPanel
                 searchKeyword={searchKeyword}
                 setSearchKeyword={setSearchKeyword}
-                jumpTargetDate={jumpTargetDate}
-                setJumpTargetDate={setJumpTargetDate}
                 totalFriendsLabel={
                     overviewStatsStatus === 'loading'
                         ? '统计中'
