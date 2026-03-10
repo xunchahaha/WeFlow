@@ -1,6 +1,14 @@
+.group-analytics-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 100%;
+}
+
 .group-analytics-page {
   display: flex;
-  height: 100%;
+  flex: 1;
+  min-height: 0;
   gap: 16px;
 
   &.standalone {

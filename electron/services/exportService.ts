@@ -1800,11 +1800,43 @@ class ExportService {
     else if (appMsgKind === 'quote') meta.appMsgType = '57'
     if (appMsgKind) meta.appMsgKind = appMsgKind
 
+    const appMsgDesc = this.extractXmlValue(normalized, 'des') || this.extractXmlValue(normalized, 'desc')
+    const appMsgAppName = this.extractXmlValue(normalized, 'appname')
+    const appMsgSourceName =
+      this.extractXmlValue(normalized, 'sourcename') ||
+      this.extractXmlValue(normalized, 'sourcedisplayname')
+    const appMsgSourceUsername = this.extractXmlValue(normalized, 'sourceusername')
+    const appMsgThumbUrl =
+      this.extractXmlValue(normalized, 'thumburl') ||
+      this.extractXmlValue(normalized, 'cdnthumburl') ||
+      this.extractXmlValue(normalized, 'cover') ||
+      this.extractXmlValue(normalized, 'coverurl') ||
+      this.extractXmlValue(normalized, 'thumbUrl') ||
+      this.extractXmlValue(normalized, 'coverUrl')
+
+    if (appMsgDesc) meta.appMsgDesc = appMsgDesc
+    if (appMsgAppName) meta.appMsgAppName = appMsgAppName
+    if (appMsgSourceName) meta.appMsgSourceName = appMsgSourceName
+    if (appMsgSourceUsername) meta.appMsgSourceUsername = appMsgSourceUsername
+    if (appMsgThumbUrl) meta.appMsgThumbUrl = appMsgThumbUrl
+
     if (appMsgKind === 'quote') {
       const quoteInfo = this.parseQuoteMessage(normalized)
       if (quoteInfo.content) meta.quotedContent = quoteInfo.content
       if (quoteInfo.sender) meta.quotedSender = quoteInfo.sender
       if (quoteInfo.type) meta.quotedType = quoteInfo.type
+    }
+
+    if (appMsgKind === 'link') {
+      const linkCard = this.extractHtmlLinkCard(normalized, localType)
+      const linkUrl = linkCard?.url || this.normalizeHtmlLinkUrl(
+        this.extractXmlValue(normalized, 'shareurl') ||
+        this.extractXmlValue(normalized, 'shorturl') ||
+        this.extractXmlValue(normalized, 'dataurl')
+      )
+      if (linkCard?.title) meta.linkTitle = linkCard.title
+      if (linkUrl) meta.linkUrl = linkUrl
+      if (appMsgThumbUrl) meta.linkThumb = appMsgThumbUrl
     }
 
     if (isMusic) {
@@ -3906,9 +3938,10 @@ class ExportService {
 
         const appMsgMeta = this.extractArkmeAppMessageMeta(msg.content, msg.localType)
         if (appMsgMeta) {
-          if (options.format === 'arkme-json') {
-            Object.assign(msgObj, appMsgMeta)
-          } else if (options.format === 'json' && appMsgMeta.appMsgKind === 'quote') {
+          if (
+            options.format === 'arkme-json' ||
+            (options.format === 'json' && (appMsgMeta.appMsgKind === 'quote' || appMsgMeta.appMsgKind === 'link'))
+          ) {
             Object.assign(msgObj, appMsgMeta)
           }
         }
@@ -4100,9 +4133,17 @@ class ExportService {
           if (message.locationLabel) compactMessage.locationLabel = message.locationLabel
           if (message.appMsgType) compactMessage.appMsgType = message.appMsgType
           if (message.appMsgKind) compactMessage.appMsgKind = message.appMsgKind
+          if (message.appMsgDesc) compactMessage.appMsgDesc = message.appMsgDesc
+          if (message.appMsgAppName) compactMessage.appMsgAppName = message.appMsgAppName
+          if (message.appMsgSourceName) compactMessage.appMsgSourceName = message.appMsgSourceName
+          if (message.appMsgSourceUsername) compactMessage.appMsgSourceUsername = message.appMsgSourceUsername
+          if (message.appMsgThumbUrl) compactMessage.appMsgThumbUrl = message.appMsgThumbUrl
           if (message.quotedContent) compactMessage.quotedContent = message.quotedContent
           if (message.quotedSender) compactMessage.quotedSender = message.quotedSender
           if (message.quotedType) compactMessage.quotedType = message.quotedType
+          if (message.linkTitle) compactMessage.linkTitle = message.linkTitle
+          if (message.linkUrl) compactMessage.linkUrl = message.linkUrl
+          if (message.linkThumb) compactMessage.linkThumb = message.linkThumb
           if (message.finderTitle) compactMessage.finderTitle = message.finderTitle
           if (message.finderDesc) compactMessage.finderDesc = message.finderDesc
           if (message.finderUsername) compactMessage.finderUsername = message.finderUsername

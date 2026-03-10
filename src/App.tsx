@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { Routes, Route, useNavigate, useLocation } from 'react-router-dom'
+import { useEffect, useRef, useState } from 'react'
+import { Routes, Route, Navigate, useNavigate, useLocation, type Location } from 'react-router-dom'
 import TitleBar from './components/TitleBar'
 import Sidebar from './components/Sidebar'
 import RouteGuard from './components/RouteGuard'
@@ -8,6 +8,7 @@ import HomePage from './pages/HomePage'
 import ChatPage from './pages/ChatPage'
 import AnalyticsPage from './pages/AnalyticsPage'
 import AnalyticsWelcomePage from './pages/AnalyticsWelcomePage'
+import ChatAnalyticsHubPage from './pages/ChatAnalyticsHubPage'
 import AnnualReportPage from './pages/AnnualReportPage'
 import AnnualReportWindow from './pages/AnnualReportWindow'
 import DualReportPage from './pages/DualReportPage'
@@ -37,9 +38,22 @@ import { GlobalSessionMonitor } from './components/GlobalSessionMonitor'
 import { BatchTranscribeGlobal } from './components/BatchTranscribeGlobal'
 import { BatchImageDecryptGlobal } from './components/BatchImageDecryptGlobal'
 
+function RouteStateRedirect({ to }: { to: string }) {
+  const location = useLocation()
+
+  return <Navigate to={to} replace state={location.state} />
+}
+
 function App() {
   const navigate = useNavigate()
   const location = useLocation()
+  const settingsBackgroundRef = useRef<Location>({
+    pathname: '/home',
+    search: '',
+    hash: '',
+    state: null,
+    key: 'settings-fallback'
+  } as Location)
 
   const {
     setDbConnected,
@@ -63,8 +77,14 @@ function App() {
   const isChatHistoryWindow = location.pathname.startsWith('/chat-history/')
   const isStandaloneChatWindow = location.pathname === '/chat-window'
   const isNotificationWindow = location.pathname === '/notification-window'
-  const isExportRoute = location.pathname === '/export'
+  const isSettingsRoute = location.pathname === '/settings'
+  const settingsRouteState = location.state as { backgroundLocation?: Location; initialTab?: unknown } | null
+  const routeLocation = isSettingsRoute
+    ? settingsRouteState?.backgroundLocation ?? settingsBackgroundRef.current
+    : location
+  const isExportRoute = routeLocation.pathname === '/export'
   const [themeHydrated, setThemeHydrated] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
 
   // 锁定状态
   // const [isLocked, setIsLocked] = useState(false) // Moved to store
@@ -80,6 +100,12 @@ function App() {
 
   // 数据收集同意状态
   const [showAnalyticsConsent, setShowAnalyticsConsent] = useState(false)
+
+  useEffect(() => {
+    if (location.pathname !== '/settings') {
+      settingsBackgroundRef.current = location
+    }
+  }, [location])
 
   useEffect(() => {
     const root = document.documentElement
@@ -429,6 +455,25 @@ function App() {
   }
 
   // 主窗口 - 完整布局
+  const handleCloseSettings = () => {
+    const backgroundLocation = settingsRouteState?.backgroundLocation ?? settingsBackgroundRef.current
+    if (backgroundLocation.pathname === '/settings') {
+      navigate('/home', { replace: true })
+      return
+    }
+    navigate(
+      {
+        pathname: backgroundLocation.pathname,
+        search: backgroundLocation.search,
+        hash: backgroundLocation.hash
+      },
+      {
+        replace: true,
+        state: backgroundLocation.state
+      }
+    )
+  }
+
   return (
     <div className="app-container">
       <div className="window-drag-region" aria-hidden="true" />
@@ -439,7 +484,10 @@ function App() {
           useHello={lockUseHello}
         />
       )}
-      <TitleBar />
+      <TitleBar
+        sidebarCollapsed={sidebarCollapsed}
+        onToggleSidebar={() => setSidebarCollapsed((prev) => !prev)}
+      />
 
       {/* 全局悬浮进度胶囊 (处理：新版本提示、下载进度、错误提示) */}
       <UpdateProgressCapsule />
@@ -550,27 +598,29 @@ function App() {
       />
 
       <div className="main-layout">
-        <Sidebar />
+        <Sidebar collapsed={sidebarCollapsed} />
         <main className="content">
           <RouteGuard>
             <div className={`export-keepalive-page ${isExportRoute ? 'active' : 'hidden'}`} aria-hidden={!isExportRoute}>
               <ExportPage />
             </div>
 
-            <Routes>
+            <Routes location={routeLocation}>
               <Route path="/" element={<HomePage />} />
               <Route path="/home" element={<HomePage />} />
               <Route path="/chat" element={<ChatPage />} />
 
-              <Route path="/analytics" element={<AnalyticsWelcomePage />} />
-              <Route path="/analytics/view" element={<AnalyticsPage />} />
-              <Route path="/group-analytics" element={<GroupAnalyticsPage />} />
+              <Route path="/analytics" element={<ChatAnalyticsHubPage />} />
+              <Route path="/analytics/private" element={<AnalyticsWelcomePage />} />
+              <Route path="/analytics/private/view" element={<AnalyticsPage />} />
+              <Route path="/analytics/group" element={<GroupAnalyticsPage />} />
+              <Route path="/analytics/view" element={<RouteStateRedirect to="/analytics/private/view" />} />
+              <Route path="/group-analytics" element={<RouteStateRedirect to="/analytics/group" />} />
               <Route path="/annual-report" element={<AnnualReportPage />} />
               <Route path="/annual-report/view" element={<AnnualReportWindow />} />
               <Route path="/dual-report" element={<DualReportPage />} />
               <Route path="/dual-report/view" element={<DualReportWindow />} />
 
-              <Route path="/settings" element={<SettingsPage />} />
               <Route path="/export" element={<div className="export-route-anchor" aria-hidden="true" />} />
               <Route path="/sns" element={<SnsPage />} />
               <Route path="/contacts" element={<ContactsPage />} />
@@ -579,6 +629,10 @@ function App() {
           </RouteGuard>
         </main>
       </div>
+
+      {isSettingsRoute && (
+        <SettingsPage onClose={handleCloseSettings} />
+      )}
     </div>
   )
 }

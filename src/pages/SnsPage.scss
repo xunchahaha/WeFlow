@@ -1,7 +1,7 @@
 /* Global Variables */
 :root {
     --sns-max-width: 800px;
-    --sns-panel-width: 320px;
+    --sns-panel-width: 380px;
     --sns-bg-color: var(--bg-primary);
     --sns-card-bg: var(--bg-secondary);
     --sns-border-radius-lg: 16px;
@@ -261,6 +261,48 @@
     min-height: 0;
     overflow-y: auto;
     padding-top: 16px;
+}
+
+.feed-contact-filter-bar {
+    margin: 10px 4px 0;
+    padding: 10px 12px;
+    border: 1px solid color-mix(in srgb, var(--primary) 28%, var(--border-color));
+    border-radius: 12px;
+    background: rgba(var(--primary-rgb), 0.08);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+
+    .feed-contact-filter-label {
+        font-size: 12px;
+        color: var(--text-secondary);
+        white-space: nowrap;
+    }
+
+    .feed-contact-filter-summary {
+        font-size: 13px;
+        color: var(--text-primary);
+        font-weight: 600;
+        min-width: 0;
+    }
+
+    .feed-contact-filter-clear {
+        margin-left: auto;
+        border: none;
+        background: transparent;
+        color: var(--primary);
+        font-size: 12px;
+        font-weight: 600;
+        cursor: pointer;
+        padding: 0;
+        white-space: nowrap;
+
+        &:hover {
+            text-decoration: underline;
+            text-underline-offset: 2px;
+        }
+    }
 }
 
 .posts-list {
@@ -1211,6 +1253,13 @@
             font-variant-numeric: tabular-nums;
         }
 
+        .contact-interaction-hint {
+            padding: 10px 16px 0;
+            font-size: 11px;
+            line-height: 1.5;
+            color: var(--text-tertiary);
+        }
+
         .contact-list-scroll {
             flex: 1;
             overflow-y: auto;
@@ -1218,23 +1267,75 @@
             display: flex;
             flex-direction: column;
             gap: 0;
-            /* Remove gap to allow borders to merge */
 
             .contact-row {
                 display: flex;
                 align-items: center;
-                gap: 12px;
-                padding: 10px;
-                border-radius: var(--sns-border-radius-md);
-                cursor: pointer;
-                transition: background 0.2s ease, transform 0.2s ease;
-                border: 1px solid transparent;
+                gap: 8px;
                 margin-bottom: 4px;
+                border-radius: var(--sns-border-radius-md);
+                transition: transform 0.2s ease;
 
                 &:hover {
-                    background: var(--hover-bg);
                     transform: translateX(2px);
-                    z-index: 10;
+                }
+
+                &.is-selected .contact-main-btn {
+                    background: rgba(var(--primary-rgb), 0.06);
+                    border-color: color-mix(in srgb, var(--primary) 20%, var(--border-color));
+                }
+
+                &.is-active .contact-main-btn {
+                    background: rgba(var(--primary-rgb), 0.12);
+                    border-color: color-mix(in srgb, var(--primary) 48%, var(--border-color));
+                    box-shadow: inset 0 0 0 1px rgba(var(--primary-rgb), 0.18);
+                }
+
+                &.is-active .contact-name {
+                    color: var(--text-primary);
+                }
+
+                .contact-select-btn {
+                    width: 32px;
+                    height: 32px;
+                    flex-shrink: 0;
+                    border: none;
+                    background: transparent;
+                    border-radius: 8px;
+                    color: var(--text-tertiary);
+                    display: inline-flex;
+                    align-items: center;
+                    justify-content: center;
+                    cursor: pointer;
+                    transition: background 0.2s ease, color 0.2s ease;
+
+                    &:hover {
+                        background: rgba(var(--primary-rgb), 0.1);
+                        color: var(--primary);
+                    }
+
+                    &.checked {
+                        color: var(--primary);
+                    }
+                }
+
+                .contact-main-btn {
+                    flex: 1;
+                    min-width: 0;
+                    display: flex;
+                    align-items: center;
+                    gap: 12px;
+                    padding: 10px 12px;
+                    border-radius: var(--sns-border-radius-md);
+                    border: 1px solid transparent;
+                    background: transparent;
+                    cursor: pointer;
+                    transition: background 0.2s ease, border-color 0.2s ease;
+                    text-align: left;
+
+                    &:hover {
+                        background: var(--hover-bg);
+                    }
                 }
 
                 .contact-meta {
@@ -1279,6 +1380,51 @@
                         animation: spin 0.8s linear infinite;
                     }
                 }
+            }
+        }
+
+        .contact-batch-bar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 16px 14px;
+            border-top: 1px solid var(--border-color);
+            background: color-mix(in srgb, var(--bg-primary) 86%, var(--bg-secondary));
+        }
+
+        .contact-batch-summary {
+            flex: 1;
+            min-width: 0;
+            font-size: 12px;
+            color: var(--text-secondary);
+            font-variant-numeric: tabular-nums;
+        }
+
+        .contact-batch-btn {
+            border: 1px solid var(--border-color);
+            background: var(--bg-secondary);
+            color: var(--text-secondary);
+            border-radius: var(--sns-border-radius-md);
+            height: 32px;
+            padding: 0 10px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: border-color 0.2s ease, background 0.2s ease, color 0.2s ease;
+
+            &:hover {
+                border-color: var(--text-tertiary);
+                background: var(--hover-bg);
+                color: var(--text-primary);
+            }
+
+            &.primary {
+                border-color: color-mix(in srgb, var(--primary) 35%, var(--border-color));
+                background: rgba(var(--primary-rgb), 0.12);
+                color: var(--primary);
             }
         }
 

@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom'
 import { BarChart2, History, RefreshCcw } from 'lucide-react'
 import { useAnalyticsStore } from '../stores/analyticsStore'
+import ChatAnalysisHeader from '../components/ChatAnalysisHeader'
 import './AnalyticsWelcomePage.scss'
 
 function AnalyticsWelcomePage() {
@@ -14,11 +15,11 @@ function AnalyticsWelcomePage() {
     const { lastLoadTime } = useAnalyticsStore()
 
     const handleLoadCache = () => {
-        navigate('/analytics/view')
+        navigate('/analytics/private/view')
     }
 
     const handleNewAnalysis = () => {
-        navigate('/analytics/view', { state: { forceRefresh: true } })
+        navigate('/analytics/private/view', { state: { forceRefresh: true } })
     }
 
     const formatLastTime = (ts: number | null) => {
@@ -27,33 +28,37 @@ function AnalyticsWelcomePage() {
     }
 
     return (
-        <div className="analytics-welcome-container">
-            <div className="welcome-content">
-                <div className="icon-wrapper">
-                    <BarChart2 size={40} />
-                </div>
-                <h1>私聊数据分析</h1>
-                <p>
-                    WeFlow 可以分析你的聊天记录，生成详细的统计报表。<br />
-                    你可以选择加载上次的分析结果（速度快），或者开始新的分析（数据最新）。
-                </p>
+        <div className="analytics-entry-page">
+            <ChatAnalysisHeader currentMode="private" />
 
-                <div className="action-cards">
-                    <button onClick={handleLoadCache}>
-                        <div className="card-icon">
-                            <History size={24} />
-                        </div>
-                        <h3>加载缓存</h3>
-                        <span>查看上次分析结果<br />(上次更新: {formatLastTime(lastLoadTime)})</span>
-                    </button>
+            <div className="analytics-welcome-container analytics-welcome-container--mode">
+                <div className="welcome-content">
+                    <div className="icon-wrapper">
+                        <BarChart2 size={40} />
+                    </div>
+                    <h1>私聊数据分析</h1>
+                    <p>
+                        WeFlow 可以分析你的好友聊天记录，生成详细的统计报表。<br />
+                        你可以选择加载上次的分析结果，或者重新开始一次新的私聊分析。
+                    </p>
 
-                    <button onClick={handleNewAnalysis}>
-                        <div className="card-icon">
-                            <RefreshCcw size={24} />
-                        </div>
-                        <h3>新的分析</h3>
-                        <span>重新扫描并计算数据<br />(可能需要几分钟)</span>
-                    </button>
+                    <div className="action-cards">
+                        <button onClick={handleLoadCache}>
+                            <div className="card-icon">
+                                <History size={24} />
+                            </div>
+                            <h3>加载缓存</h3>
+                            <span>查看上次分析结果<br />(上次更新: {formatLastTime(lastLoadTime)})</span>
+                        </button>
+
+                        <button onClick={handleNewAnalysis}>
+                            <div className="card-icon">
+                                <RefreshCcw size={24} />
+                            </div>
+                            <h3>新的分析</h3>
+                            <span>重新扫描并计算数据<br />(可能需要几分钟)</span>
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>

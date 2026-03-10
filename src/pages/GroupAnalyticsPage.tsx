@@ -4,7 +4,14 @@ import { Users, BarChart3, Clock, Image, Loader2, RefreshCw, Medal, Search, X, C
 import { Avatar } from '../components/Avatar'
 import ReactECharts from 'echarts-for-react'
 import DateRangePicker from '../components/DateRangePicker'
+import ChatAnalysisHeader from '../components/ChatAnalysisHeader'
 import * as configService from '../services/config'
+import {
+  finishBackgroundTask,
+  isBackgroundTaskCancelRequested,
+  registerBackgroundTask,
+  updateBackgroundTask
+} from '../services/backgroundTaskMonitor'
 import './GroupAnalyticsPage.scss'
 
 interface GroupChatInfo {
@@ -176,15 +183,39 @@ function GroupAnalyticsPage() {
   }, [])
 
   const loadGroups = useCallback(async () => {
+    const taskId = registerBackgroundTask({
+      sourcePage: 'groupAnalytics',
+      title: '群列表加载',
+      detail: '正在读取群聊列表',
+      progressText: '群聊列表',
+      cancelable: true
+    })
     setIsLoading(true)
     try {
       const result = await window.electronAPI.groupAnalytics.getGroupChats()
+      if (isBackgroundTaskCancelRequested(taskId)) {
+        finishBackgroundTask(taskId, 'canceled', {
+          detail: '已停止后续加载，群聊列表结果未继续写入'
+        })
+        return
+      }
       if (result.success && result.data) {
         setGroups(result.data)
         setFilteredGroups(result.data)
+        finishBackgroundTask(taskId, 'completed', {
+          detail: `群聊列表加载完成，共 ${result.data.length} 个群`,
+          progressText: `${result.data.length} 个群`
+        })
+      } else {
+        finishBackgroundTask(taskId, 'failed', {
+          detail: result.error || '加载群聊列表失败'
+        })
       }
     } catch (e) {
       console.error(e)
+      finishBackgroundTask(taskId, 'failed', {
+        detail: String(e)
+      })
     } finally {
       setIsLoading(false)
     }
@@ -314,6 +345,13 @@ function GroupAnalyticsPage() {
 
   const loadFunctionData = async (func: AnalysisFunction) => {
     if (!selectedGroup) return
+    const taskId = registerBackgroundTask({
+      sourcePage: 'groupAnalytics',
+      title: `群分析：${func}`,
+      detail: `正在读取 ${selectedGroup.displayName || selectedGroup.username} 的分析数据`,
+      progressText: func,
+      cancelable: true
+    })
     setFunctionLoading(true)
 
     // 计算时间戳
@@ -323,33 +361,96 @@ function GroupAnalyticsPage() {
     try {
       switch (func) {
         case 'members': {
+          updateBackgroundTask(taskId, {
+            detail: '正在读取群成员列表',
+            progressText: '成员列表'
+          })
           const result = await window.electronAPI.groupAnalytics.getGroupMembers(selectedGroup.username)
+          if (isBackgroundTaskCancelRequested(taskId)) {
+            finishBackgroundTask(taskId, 'canceled', { detail: '已停止后续加载，群成员列表未继续写入' })
+            return
+          }
           if (result.success && result.data) setMembers(result.data)
+          finishBackgroundTask(taskId, result.success ? 'completed' : 'failed', {
+            detail: result.success ? `群成员列表加载完成，共 ${result.data?.length || 0} 人` : (result.error || '读取群成员列表失败'),
+            progressText: result.success ? `${result.data?.length || 0} 人` : '失败'
+          })
           break
         }
         case 'memberExport': {
+          updateBackgroundTask(taskId, {
+            detail: '正在读取导出成员列表',
+            progressText: '成员导出'
+          })
           const result = await window.electronAPI.groupAnalytics.getGroupMembers(selectedGroup.username)
+          if (isBackgroundTaskCancelRequested(taskId)) {
+            finishBackgroundTask(taskId, 'canceled', { detail: '已停止后续加载，成员导出列表未继续写入' })
+            return
+          }
           if (result.success && result.data) setMembers(result.data)
+          finishBackgroundTask(taskId, result.success ? 'completed' : 'failed', {
+            detail: result.success ? `成员导出列表加载完成，共 ${result.data?.length || 0} 人` : (result.error || '读取成员导出列表失败'),
+            progressText: result.success ? `${result.data?.length || 0} 人` : '失败'
+          })
           break
         }
         case 'ranking': {
+          updateBackgroundTask(taskId, {
+            detail: '正在计算群消息排行',
+            progressText: '消息排行'
+          })
           const result = await window.electronAPI.groupAnalytics.getGroupMessageRanking(selectedGroup.username, 20, startTime, endTime)
+          if (isBackgroundTaskCancelRequested(taskId)) {
+            finishBackgroundTask(taskId, 'canceled', { detail: '已停止后续加载，群消息排行未继续写入' })
+            return
+          }
           if (result.success && result.data) setRankings(result.data)
+          finishBackgroundTask(taskId, result.success ? 'completed' : 'failed', {
+            detail: result.success ? `群消息排行加载完成，共 ${result.data?.length || 0} 条` : (result.error || '读取群消息排行失败'),
+            progressText: result.success ? `${result.data?.length || 0} 条` : '失败'
+          })
           break
         }
         case 'activeHours': {
+          updateBackgroundTask(taskId, {
+            detail: '正在计算群活跃时段',
+            progressText: '活跃时段'
+          })
           const result = await window.electronAPI.groupAnalytics.getGroupActiveHours(selectedGroup.username, startTime, endTime)
+          if (isBackgroundTaskCancelRequested(taskId)) {
+            finishBackgroundTask(taskId, 'canceled', { detail: '已停止后续加载，群活跃时段未继续写入' })
+            return
+          }
           if (result.success && result.data) setActiveHours(result.data.hourlyDistribution)
+          finishBackgroundTask(taskId, result.success ? 'completed' : 'failed', {
+            detail: result.success ? '群活跃时段加载完成' : (result.error || '读取群活跃时段失败'),
+            progressText: result.success ? '24 小时分布' : '失败'
+          })
           break
         }
         case 'mediaStats': {
+          updateBackgroundTask(taskId, {
+            detail: '正在统计群消息类型',
+            progressText: '消息类型'
+          })
           const result = await window.electronAPI.groupAnalytics.getGroupMediaStats(selectedGroup.username, startTime, endTime)
+          if (isBackgroundTaskCancelRequested(taskId)) {
+            finishBackgroundTask(taskId, 'canceled', { detail: '已停止后续加载，群消息类型统计未继续写入' })
+            return
+          }
           if (result.success && result.data) setMediaStats(result.data)
+          finishBackgroundTask(taskId, result.success ? 'completed' : 'failed', {
+            detail: result.success ? `群消息类型统计完成，共 ${result.data?.total || 0} 条` : (result.error || '读取群消息类型统计失败'),
+            progressText: result.success ? `${result.data?.total || 0} 条` : '失败'
+          })
           break
         }
       }
     } catch (e) {
       console.error(e)
+      finishBackgroundTask(taskId, 'failed', {
+        detail: String(e)
+      })
     } finally {
       setFunctionLoading(false)
     }
@@ -1085,11 +1186,14 @@ function GroupAnalyticsPage() {
   }
 
   return (
-    <div className={`group-analytics-page ${isResizing ? 'resizing' : ''}`} ref={containerRef}>
-      {renderGroupList()}
-      <div className="resize-handle" onMouseDown={() => setIsResizing(true)} />
-      <div className="detail-area">
-        {renderDetailPanel()}
+    <div className="group-analytics-shell">
+      <ChatAnalysisHeader currentMode="group" />
+      <div className={`group-analytics-page ${isResizing ? 'resizing' : ''}`} ref={containerRef}>
+        {renderGroupList()}
+        <div className="resize-handle" onMouseDown={() => setIsResizing(true)} />
+        <div className="detail-area">
+          {renderDetailPanel()}
+        </div>
       </div>
       {renderMemberModal()}
     </div>

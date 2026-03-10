@@ -1,5 +1,5 @@
 import React from 'react'
-import { Search, User, X, Loader2 } from 'lucide-react'
+import { Search, User, X, Loader2, CheckSquare, Square, Download } from 'lucide-react'
 import { Avatar } from '../Avatar'
 
 interface Contact {
@@ -25,7 +25,12 @@ interface SnsFilterPanelProps {
     setContactSearch: (val: string) => void
     loading?: boolean
     contactsCountProgress?: ContactsCountProgress
+    selectedContactUsernames: string[]
+    activeContactUsername?: string
     onOpenContactTimeline: (contact: Contact) => void
+    onToggleContactSelected: (contact: Contact) => void
+    onClearSelectedContacts: () => void
+    onExportSelectedContacts: () => void
 }
 
 export const SnsFilterPanel: React.FC<SnsFilterPanelProps> = ({
@@ -37,11 +42,20 @@ export const SnsFilterPanel: React.FC<SnsFilterPanelProps> = ({
     setContactSearch,
     loading,
     contactsCountProgress,
-    onOpenContactTimeline
+    selectedContactUsernames,
+    activeContactUsername,
+    onOpenContactTimeline,
+    onToggleContactSelected,
+    onClearSelectedContacts,
+    onExportSelectedContacts
 }) => {
     const filteredContacts = contacts.filter(c =>
         (c.displayName || '').toLowerCase().includes(contactSearch.toLowerCase()) ||
         c.username.toLowerCase().includes(contactSearch.toLowerCase())
+    )
+    const selectedContactLookup = React.useMemo(
+        () => new Set(selectedContactUsernames),
+        [selectedContactUsernames]
     )
 
     const clearFilters = () => {
@@ -122,35 +136,69 @@ export const SnsFilterPanel: React.FC<SnsFilterPanelProps> = ({
                         </div>
                     )}
 
+                    <div className="contact-interaction-hint">
+                        点左侧可多选下载，点右侧可查看单人详情
+                    </div>
+
                     <div className="contact-list-scroll">
                         {filteredContacts.map(contact => {
                             const isPostCountReady = contact.postCountStatus === 'ready'
+                            const isSelected = selectedContactLookup.has(contact.username)
+                            const isActive = activeContactUsername === contact.username
                             return (
-                            <div
-                                key={contact.username}
-                                className="contact-row"
-                                onClick={() => onOpenContactTimeline(contact)}
-                            >
-                                <Avatar src={contact.avatarUrl} name={contact.displayName} size={36} shape="rounded" />
-                                <div className="contact-meta">
-                                    <span className="contact-name">{contact.displayName}</span>
+                                <div
+                                    key={contact.username}
+                                    className={`contact-row${isSelected ? ' is-selected' : ''}${isActive ? ' is-active' : ''}`}
+                                >
+                                    <button
+                                        type="button"
+                                        className={`contact-select-btn${isSelected ? ' checked' : ''}`}
+                                        onClick={() => onToggleContactSelected(contact)}
+                                        title={isSelected ? `取消选择 ${contact.displayName}` : `选择 ${contact.displayName}`}
+                                        aria-pressed={isSelected}
+                                    >
+                                        {isSelected ? <CheckSquare size={16} /> : <Square size={16} />}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="contact-main-btn"
+                                        onClick={() => onOpenContactTimeline(contact)}
+                                        title={`查看 ${contact.displayName} 的朋友圈`}
+                                    >
+                                        <Avatar src={contact.avatarUrl} name={contact.displayName} size={36} shape="rounded" />
+                                        <div className="contact-meta">
+                                            <span className="contact-name">{contact.displayName}</span>
+                                        </div>
+                                        <div className="contact-post-count-wrap">
+                                            {isPostCountReady ? (
+                                                <span className="contact-post-count">{Math.max(0, Math.floor(Number(contact.postCount || 0)))}条</span>
+                                            ) : (
+                                                <span className="contact-post-count-loading" title="统计中">
+                                                    <Loader2 size={13} className="spinning" />
+                                                </span>
+                                            )}
+                                        </div>
+                                    </button>
                                 </div>
-                                <div className="contact-post-count-wrap">
-                                    {isPostCountReady ? (
-                                        <span className="contact-post-count">{Math.max(0, Math.floor(Number(contact.postCount || 0)))}条</span>
-                                    ) : (
-                                        <span className="contact-post-count-loading" title="统计中">
-                                            <Loader2 size={13} className="spinning" />
-                                        </span>
-                                    )}
-                                </div>
-                            </div>
                             )
                         })}
                         {filteredContacts.length === 0 && (
                             <div className="empty-state">{getEmptyStateText()}</div>
                         )}
                     </div>
+
+                    {selectedContactUsernames.length > 0 && (
+                        <div className="contact-batch-bar">
+                            <span className="contact-batch-summary">已选 {selectedContactUsernames.length} 人</span>
+                            <button type="button" className="contact-batch-btn" onClick={onClearSelectedContacts}>
+                                清空
+                            </button>
+                            <button type="button" className="contact-batch-btn primary" onClick={onExportSelectedContacts}>
+                                <Download size={14} />
+                                <span>下载所选</span>
+                            </button>
+                        </div>
+                    )}
                 </div>
             </div>
         </aside>

@@ -1,13 +1,30 @@
+.analytics-entry-page {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    min-height: 100%;
+}
+
 .analytics-welcome-container {
     display: flex;
     flex-direction: column;
+    flex: 1;
     align-items: center;
     justify-content: center;
-    height: 100%;
+    min-height: 0;
     padding: 40px;
     background: var(--bg-primary);
     color: var(--text-primary);
     animation: fadeIn 0.4s ease-out;
+    overflow-y: auto;
+
+    &.analytics-welcome-container--mode {
+        border-radius: 20px;
+        border: 1px solid var(--border-color);
+        background:
+            radial-gradient(circle at top, rgba(7, 193, 96, 0.06), transparent 48%),
+            var(--bg-primary);
+    }
 
     .welcome-content {
         text-align: center;
@@ -101,6 +118,18 @@
                     font-size: 13px;
                     color: var(--text-tertiary);
                 }
+            }
+        }
+    }
+}
+
+@media (max-width: 768px) {
+    .analytics-welcome-container {
+        padding: 28px 18px;
+
+        .welcome-content {
+            .action-cards {
+                grid-template-columns: 1fr;
             }
         }
     }

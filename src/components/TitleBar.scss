@@ -4,16 +4,25 @@
   display: flex;
   align-items: center;
   padding-left: 16px;
+  padding-right: 16px;
   border-bottom: 1px solid var(--border-color);
   -webkit-app-region: drag;
   flex-shrink: 0;
   gap: 8px;
+  position: relative;
+  z-index: 2101;
 }
 
 // 繁花如梦：标题栏毛玻璃
 [data-theme="blossom-dream"] .title-bar {
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
+}
+
+.title-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .title-logo {
@@ -26,4 +35,25 @@
   font-size: 15px;
   font-weight: 500;
   color: var(--text-secondary);
+}
+
+.title-sidebar-toggle {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-tertiary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease;
+  -webkit-app-region: no-drag;
+
+  &:hover {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+  }
 }

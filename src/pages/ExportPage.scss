@@ -254,6 +254,168 @@
   }
 }
 
+.session-load-detail-summary {
+  padding: 12px 12px 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.session-load-detail-summary-text {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+
+  strong {
+    font-size: 18px;
+    color: var(--text-primary);
+  }
+
+  em {
+    font-style: normal;
+    color: var(--text-tertiary);
+  }
+}
+
+.session-load-detail-note {
+  margin: 8px 12px 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-tertiary);
+}
+
+.session-load-detail-stop-btn,
+.session-load-detail-task-stop-btn {
+  border: 1px solid color-mix(in srgb, var(--danger, #ef4444) 45%, var(--border-color));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--danger, #ef4444) 8%, var(--bg-secondary));
+  color: color-mix(in srgb, var(--danger, #ef4444) 85%, var(--text-primary));
+  cursor: pointer;
+  white-space: nowrap;
+
+  &:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+}
+
+.session-load-detail-stop-btn {
+  padding: 8px 12px;
+  font-size: 12px;
+}
+
+.session-load-detail-task-list {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.session-load-detail-task-item {
+  border: 1px solid color-mix(in srgb, var(--border-color) 72%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-primary) 86%, var(--bg-secondary));
+  padding: 10px 12px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+
+  &.status-cancel_requested {
+    border-color: color-mix(in srgb, var(--warning, #f59e0b) 36%, var(--border-color));
+  }
+
+  &.status-failed {
+    border-color: color-mix(in srgb, var(--danger, #ef4444) 36%, var(--border-color));
+  }
+}
+
+.session-load-detail-task-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+
+  p {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.55;
+    color: var(--text-secondary);
+  }
+}
+
+.session-load-detail-task-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+
+  strong {
+    font-size: 13px;
+    color: var(--text-primary);
+  }
+}
+
+.session-load-detail-task-source {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+}
+
+.session-load-detail-task-status {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-secondary) 80%, transparent);
+  color: var(--text-secondary);
+
+  &.status-running {
+    color: var(--primary);
+    background: rgba(var(--primary-rgb), 0.1);
+  }
+
+  &.status-cancel_requested {
+    color: #b45309;
+    background: rgba(245, 158, 11, 0.14);
+  }
+
+  &.status-completed {
+    color: #166534;
+    background: rgba(34, 197, 94, 0.14);
+  }
+
+  &.status-failed {
+    color: #b91c1c;
+    background: rgba(239, 68, 68, 0.14);
+  }
+}
+
+.session-load-detail-task-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.session-load-detail-task-stop-btn {
+  padding: 7px 10px;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.session-load-detail-empty {
+  padding: 12px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
 .session-load-detail-table {
   display: flex;
   flex-direction: column;
@@ -744,6 +906,7 @@
     width: 100%;
     border: none;
     background: transparent;
+    color: var(--text-primary);
     text-align: left;
     padding: 8px 10px;
     border-radius: 8px;
@@ -765,6 +928,7 @@
   .layout-option-label {
     font-size: 13px;
     font-weight: 600;
+    color: inherit;
   }
 
   .layout-option-desc {
@@ -1399,15 +1563,10 @@
 }
 
 .session-table-section {
-  border: 1px solid var(--border-color);
-  border-radius: 12px;
-  background: var(--card-bg);
-  padding: 12px;
   flex: 0 0 auto;
   min-height: 420px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
   overflow: visible;
 }
 
@@ -1458,20 +1617,31 @@
 .table-tabs {
   display: flex;
   gap: 8px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  align-items: center;
 
   .tab-btn {
+    flex: 0 0 auto;
+    width: auto;
+    max-width: max-content;
     border: 1px solid var(--border-color);
     background: var(--bg-secondary);
     color: var(--text-secondary);
-    padding: 7px 12px;
+    padding: 7px 6px;
     border-radius: 999px;
     cursor: pointer;
     font-size: 13px;
     white-space: nowrap;
     display: inline-flex;
     align-items: center;
-    gap: 4px;
+    justify-content: center;
+
+    .tab-btn-content {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      line-height: 1;
+    }
 
     &.active {
       border-color: var(--primary);
@@ -1547,14 +1717,21 @@
 }
 
 .table-wrap {
+  --contacts-native-scrollbar-compensation: 18px;
   --contacts-row-height: 76px;
   --contacts-default-visible-rows: 10;
   --contacts-default-list-height: calc(var(--contacts-row-height) * var(--contacts-default-visible-rows));
   --contacts-select-col-width: 34px;
+  --contacts-avatar-col-width: 44px;
   --contacts-inline-padding: 12px;
+  --contacts-column-gap: 12px;
+  --contacts-name-text-width: 10em;
+  --contacts-main-col-width: calc(var(--contacts-avatar-col-width) + var(--contacts-column-gap) + var(--contacts-name-text-width));
+  --contacts-left-sticky-width: calc(var(--contacts-select-col-width) + var(--contacts-main-col-width) + var(--contacts-column-gap));
   --contacts-message-col-width: 120px;
   --contacts-media-col-width: 72px;
   --contacts-action-col-width: 140px;
+  --contacts-table-min-width: 1200px;
   overflow: hidden;
   border: 1px solid var(--border-color);
   border-radius: 10px;
@@ -1563,24 +1740,51 @@
   flex: 1;
   display: flex;
   flex-direction: column;
+  background: var(--bg-secondary);
 }
 
 .table-wrap {
+  .table-scroll-shell {
+    overflow: hidden;
+  }
+
+  .table-scroll-viewport {
+    min-height: 0;
+    overflow-x: auto;
+    overflow-y: visible;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    background: var(--bg-secondary);
+    padding-bottom: var(--contacts-native-scrollbar-compensation);
+    margin-bottom: calc(-1 * var(--contacts-native-scrollbar-compensation));
+
+    &::-webkit-scrollbar {
+      display: none;
+    }
+  }
+
+  .table-scroll-content {
+    min-width: max(100%, var(--contacts-table-min-width));
+  }
+
   .session-table-sticky {
     position: sticky;
     top: 0;
     z-index: 20;
-    background: var(--card-bg);
+    background: var(--bg-secondary);
   }
 
   .loading-state,
   .empty-state {
+    width: 100%;
+    min-width: max(100%, var(--contacts-table-min-width));
     flex: 1;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
     gap: 12px;
+    background: var(--bg-secondary);
     color: var(--text-tertiary);
     font-size: 14px;
 
@@ -1590,14 +1794,17 @@
   }
 
   .load-issue-state {
+    width: 100%;
+    min-width: max(100%, var(--contacts-table-min-width));
     flex: 1;
     padding: 14px;
     overflow-y: auto;
+    background: var(--bg-secondary);
   }
 
   .issue-card {
     border: 1px solid color-mix(in srgb, var(--danger, #ef4444) 45%, var(--border-color));
-    background: color-mix(in srgb, var(--danger, #ef4444) 8%, var(--card-bg));
+    background: color-mix(in srgb, var(--danger, #ef4444) 8%, var(--bg-secondary));
     border-radius: 12px;
     padding: 14px;
     color: var(--text-primary);
@@ -1671,7 +1878,7 @@
   .issue-diagnostics {
     margin-top: 12px;
     border-radius: 8px;
-    background: var(--bg-primary);
+    background: color-mix(in srgb, var(--bg-secondary) 92%, var(--bg-primary));
     border: 1px dashed var(--border-color);
     padding: 10px;
     font-size: 12px;
@@ -1682,17 +1889,37 @@
   }
 
   .contacts-list-header {
+    --contacts-header-bg: color-mix(in srgb, var(--bg-secondary) 90%, var(--bg-primary));
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: var(--contacts-column-gap);
     padding: 10px var(--contacts-inline-padding) 8px;
+    min-width: max(100%, var(--contacts-table-min-width));
     border-bottom: 1px solid color-mix(in srgb, var(--border-color) 85%, transparent);
-    background: color-mix(in srgb, var(--bg-primary) 78%, var(--bg-secondary));
+    background: var(--contacts-header-bg);
     font-size: 12px;
     color: var(--text-tertiary);
     font-weight: 600;
     letter-spacing: 0.01em;
     flex-shrink: 0;
+
+    &.is-draggable {
+      cursor: grab;
+    }
+
+    &.is-dragging {
+      cursor: grabbing;
+      user-select: none;
+    }
+  }
+
+  .contacts-list-header-left {
+    display: flex;
+    align-items: center;
+    gap: var(--contacts-column-gap);
+    width: var(--contacts-left-sticky-width);
+    min-width: var(--contacts-left-sticky-width);
+    max-width: var(--contacts-left-sticky-width);
   }
 
   .contacts-list-header-select {
@@ -1705,8 +1932,10 @@
   }
 
   .contacts-list-header-main {
-    flex: 1;
-    min-width: 0;
+    flex: 0 0 var(--contacts-main-col-width);
+    width: var(--contacts-main-col-width);
+    min-width: var(--contacts-main-col-width);
+    max-width: var(--contacts-main-col-width);
     display: flex;
     align-items: center;
     gap: 8px;
@@ -1721,21 +1950,30 @@
 
   .contacts-list-header-count {
     width: var(--contacts-message-col-width);
+    min-width: var(--contacts-message-col-width);
+    display: flex;
+    align-items: center;
+    justify-content: center;
     text-align: center;
     flex-shrink: 0;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    box-sizing: border-box;
   }
 
   .contacts-list-header-media {
     width: var(--contacts-media-col-width);
     min-width: var(--contacts-media-col-width);
+    display: flex;
+    align-items: center;
+    justify-content: center;
     text-align: center;
     flex-shrink: 0;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    box-sizing: border-box;
   }
 
   .contacts-list-header-actions {
@@ -1749,8 +1987,8 @@
     flex-shrink: 0;
     position: sticky;
     right: 0;
-    z-index: 8;
-    background: var(--bg-primary);
+    z-index: 13;
+    background: var(--contacts-header-bg);
     white-space: nowrap;
 
     &::before {
@@ -1761,30 +1999,70 @@
       left: -8px;
       width: 8px;
       pointer-events: none;
-      background: linear-gradient(to right, transparent, var(--bg-primary));
+      background: linear-gradient(to right, transparent, var(--contacts-header-bg));
     }
   }
 
   .contacts-list {
+    width: 100%;
+    min-width: max(100%, var(--contacts-table-min-width));
     flex: 1;
     min-height: var(--contacts-default-list-height);
     height: var(--contacts-default-list-height);
-    overflow: hidden;
+    position: relative;
+    overflow-x: clip;
+    overflow-y: auto;
+    overscroll-behavior: contain;
     padding: 0 0 12px;
-  }
-
-  .contacts-virtuoso {
-    height: 100%;
+    background: var(--bg-secondary);
 
     &::-webkit-scrollbar {
       width: 6px;
     }
 
-    &::-webkit-scrollbar-thumb {
-      background: var(--text-tertiary);
-      border-radius: 3px;
-      opacity: 0.3;
+    &::-webkit-scrollbar-track {
+      background: transparent;
     }
+
+    &::-webkit-scrollbar-thumb {
+      background: color-mix(in srgb, var(--text-tertiary) 72%, transparent);
+      border-radius: 999px;
+    }
+  }
+
+  .contacts-virtuoso {
+    width: 100%;
+  }
+
+  .table-bottom-scrollbar {
+    flex: 0 0 auto;
+    overflow-x: auto;
+    overflow-y: hidden;
+    background: color-mix(in srgb, var(--bg-secondary) 90%, var(--bg-primary));
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--text-tertiary) 70%, transparent) transparent;
+
+    &::-webkit-scrollbar {
+      height: 10px;
+    }
+
+    &::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    &::-webkit-scrollbar-thumb {
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--text-tertiary) 70%, transparent);
+    }
+  }
+
+  .table-bottom-scrollbar-inner {
+    height: 1px;
+  }
+
+  .table-bottom-scrollbar {
+    height: 16px;
+    border-top: 1px solid color-mix(in srgb, var(--border-color) 80%, transparent);
   }
 
   .selection-clear-btn {
@@ -1848,28 +2126,48 @@
     padding-bottom: 4px;
 
     &.selected .contact-item {
-      background: rgba(var(--primary-rgb), 0.08);
+      background: var(--contacts-row-bg);
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 52%, transparent);
     }
 
-    &.selected .row-action-cell {
-      background: rgba(var(--primary-rgb), 0.08);
+    &.selected .contact-item:hover {
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 60%, transparent);
     }
   }
 
   .contact-item {
+    --contacts-row-bg: var(--bg-secondary);
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 12px var(--contacts-inline-padding);
+    gap: var(--contacts-column-gap);
+    padding: 12px 6px 12px var(--contacts-inline-padding);
+    min-width: max(100%, var(--contacts-table-min-width));
     height: 72px;
     box-sizing: border-box;
     border-radius: 10px;
     transition: all 0.2s;
     cursor: default;
+    background: var(--contacts-row-bg);
+    box-shadow: inset 0 0 0 1px transparent;
 
     &:hover {
-      background: var(--bg-hover);
+      background: var(--contacts-row-bg);
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text-tertiary) 24%, transparent);
     }
+  }
+
+  .row-left-sticky {
+    position: sticky;
+    left: 0;
+    z-index: 11;
+    display: flex;
+    align-items: center;
+    align-self: stretch;
+    gap: var(--contacts-column-gap);
+    width: var(--contacts-left-sticky-width);
+    min-width: var(--contacts-left-sticky-width);
+    max-width: var(--contacts-left-sticky-width);
+    background: var(--contacts-row-bg);
   }
 
   .row-select-cell {
@@ -1905,8 +2203,10 @@
   }
 
   .contact-info {
-    flex: 1;
-    min-width: 0;
+    flex: 0 0 var(--contacts-name-text-width);
+    width: var(--contacts-name-text-width);
+    min-width: var(--contacts-name-text-width);
+    max-width: var(--contacts-name-text-width);
   }
 
   .contact-name {
@@ -1949,6 +2249,7 @@
     gap: 4px;
     flex-shrink: 0;
     text-align: center;
+    box-sizing: border-box;
   }
 
   .row-media-metric {
@@ -1959,6 +2260,7 @@
     align-items: center;
     flex-shrink: 0;
     text-align: center;
+    box-sizing: border-box;
   }
 
   .row-media-metric-value {
@@ -1982,6 +2284,7 @@
     background: transparent;
     margin: 0;
     padding: 0;
+    width: 100%;
     min-height: 14px;
     display: inline-flex;
     align-items: center;
@@ -2104,11 +2407,12 @@
   min-width: 1300px;
   border-collapse: separate;
   border-spacing: 0;
+  background: var(--bg-secondary);
 
   thead th {
     position: sticky;
     top: 0;
-    background: color-mix(in srgb, var(--bg-primary) 75%, var(--bg-secondary));
+    background: color-mix(in srgb, var(--bg-secondary) 90%, var(--bg-primary));
     z-index: 4;
     font-size: 12px;
     text-align: left;
@@ -2231,24 +2535,16 @@
   display: flex;
   flex-direction: column;
   align-items: flex-end;
+  justify-content: center;
+  align-self: stretch;
   gap: 4px;
   width: var(--contacts-action-col-width);
+  min-width: var(--contacts-action-col-width);
   flex-shrink: 0;
   position: sticky;
   right: 0;
-  z-index: 6;
-  background: var(--bg-primary);
-
-  &::before {
-    content: '';
-    position: absolute;
-    top: -12px;
-    bottom: -12px;
-    left: -8px;
-    width: 8px;
-    pointer-events: none;
-    background: linear-gradient(to right, transparent, var(--bg-primary));
-  }
+  z-index: 10;
+  background: var(--contacts-row-bg);
 
   .row-action-main {
     display: inline-flex;
@@ -3929,6 +4225,8 @@
 
   .table-wrap {
     --contacts-inline-padding: 10px;
+    --contacts-name-text-width: 10em;
+    --contacts-main-col-width: calc(44px + 10px + var(--contacts-name-text-width));
     --contacts-message-col-width: 104px;
     --contacts-media-col-width: 62px;
     --contacts-action-col-width: 140px;

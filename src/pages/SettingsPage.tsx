@@ -10,7 +10,7 @@ import {
   Eye, EyeOff, FolderSearch, FolderOpen, Search, Copy,
   RotateCcw, Trash2, Plug, Check, Sun, Moon, Monitor,
   Palette, Database, HardDrive, Info, RefreshCw, ChevronDown, Download, Mic,
-  ShieldCheck, Fingerprint, Lock, KeyRound, Bell, Globe, BarChart2
+  ShieldCheck, Fingerprint, Lock, KeyRound, Bell, Globe, BarChart2, X
 } from 'lucide-react'
 import { Avatar } from '../components/Avatar'
 import './SettingsPage.scss'
@@ -36,7 +36,11 @@ interface WxidOption {
   modifiedTime: number
 }
 
-function SettingsPage() {
+interface SettingsPageProps {
+  onClose?: () => void
+}
+
+function SettingsPage({ onClose }: SettingsPageProps = {}) {
   const location = useLocation()
   const {
     isDbConnected,
@@ -194,6 +198,17 @@ function SettingsPage() {
     if (!initialTab) return
     setActiveTab(initialTab)
   }, [location.state])
+
+  useEffect(() => {
+    if (!onClose) return
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        onClose()
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [onClose])
 
   useEffect(() => {
     const removeDb = window.electronAPI.key.onDbKeyStatus((payload: { message: string; level: number }) => {
@@ -1410,6 +1425,8 @@ function SettingsPage() {
       </div>
     </div>
   )
+  const resolvedWhisperModelPath = whisperModelDir || whisperModelStatus?.modelPath || ''
+
   const renderModelsTab = () => (
     <div className="tab-content">
       <div className="form-group">
@@ -1424,42 +1441,52 @@ function SettingsPage() {
         <div className="setting-control vertical has-border">
           <div className="model-status-card">
             <div className="model-info">
-              <div className="model-name">SenseVoiceSmall (245 MB)</div>
-              <div className="model-path">
+              <div className="model-name-row">
+                <div className="model-name">SenseVoiceSmall</div>
+                <span className="model-size">245 MB</span>
+              </div>
+              <div className="model-meta">
                 {whisperModelStatus?.exists ? (
                   <span className="status-indicator success"><Check size={14} /> 已安装</span>
                 ) : (
                   <span className="status-indicator warning">未安装</span>
                 )}
-                {whisperModelDir && <div className="path-text" title={whisperModelDir}>{whisperModelDir}</div>}
+                {resolvedWhisperModelPath && (
+                  <div className="model-path-block">
+                    <span className="path-label">模型目录</span>
+                    <div className="path-text" title={resolvedWhisperModelPath}>{resolvedWhisperModelPath}</div>
+                  </div>
+                )}
               </div>
             </div>
-            <div className="model-actions">
-              {!whisperModelStatus?.exists && !isWhisperDownloading && (
-                <button
-                  className="btn-download"
-                  onClick={handleDownloadWhisperModel}
-                >
-                  <Download size={16} /> 下载模型
-                </button>
-              )}
-              {isWhisperDownloading && (
-                <div className="download-status">
-                  <div className="status-header">
-                    <span className="percent">{Math.round(whisperDownloadProgress)}%</span>
-                    {whisperProgressData.total > 0 && (
-                      <span className="details">
-                        {formatBytes(whisperProgressData.downloaded)} / {formatBytes(whisperProgressData.total)}
-                        <span className="speed">({formatBytes(whisperProgressData.speed)}/s)</span>
-                      </span>
-                    )}
+            {(!whisperModelStatus?.exists || isWhisperDownloading) && (
+              <div className="model-actions">
+                {!whisperModelStatus?.exists && !isWhisperDownloading && (
+                  <button
+                    className="btn-download"
+                    onClick={handleDownloadWhisperModel}
+                  >
+                    <Download size={16} /> 下载模型
+                  </button>
+                )}
+                {isWhisperDownloading && (
+                  <div className="download-status">
+                    <div className="status-header">
+                      <span className="percent">{Math.round(whisperDownloadProgress)}%</span>
+                      {whisperProgressData.total > 0 && (
+                        <span className="details">
+                          {formatBytes(whisperProgressData.downloaded)} / {formatBytes(whisperProgressData.total)}
+                          <span className="speed">({formatBytes(whisperProgressData.speed)}/s)</span>
+                        </span>
+                      )}
+                    </div>
+                    <div className="progress-bar-mini">
+                      <div className="fill" style={{ width: `${whisperDownloadProgress}%` }}></div>
+                    </div>
                   </div>
-                  <div className="progress-bar-mini">
-                    <div className="fill" style={{ width: `${whisperDownloadProgress}%` }}></div>
-                  </div>
-                </div>
-              )}
-            </div>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="sub-setting">
@@ -2049,66 +2076,80 @@ function SettingsPage() {
   )
 
   return (
-    <div className="settings-page">
-      {message && <div className={`message-toast ${message.success ? 'success' : 'error'}`}>{message.text}</div>}
+    <div className="settings-modal-overlay" onClick={() => onClose?.()}>
+      <div className="settings-page" onClick={(event) => event.stopPropagation()}>
+        {message && <div className={`message-toast ${message.success ? 'success' : 'error'}`}>{message.text}</div>}
 
-      {/* 多账号选择对话框 */}
-      {showWxidSelect && wxidOptions.length > 1 && (
-        <div className="wxid-dialog-overlay" onClick={() => setShowWxidSelect(false)}>
-          <div className="wxid-dialog" onClick={(e) => e.stopPropagation()}>
-            <div className="wxid-dialog-header">
-              <h3>检测到多个微信账号</h3>
-              <p>请选择要使用的账号</p>
-            </div>
-            <div className="wxid-dialog-list">
-              {wxidOptions.map((opt) => (
-                <div
-                  key={opt.wxid}
-                  className={`wxid-dialog-item ${opt.wxid === wxid ? 'active' : ''}`}
-                  onClick={() => handleSelectWxid(opt.wxid)}
-                >
-                  <span className="wxid-id">{opt.wxid}</span>
-                  <span className="wxid-date">最后修改 {new Date(opt.modifiedTime).toLocaleString()}</span>
-                </div>
-              ))}
-            </div>
-            <div className="wxid-dialog-footer">
-              <button className="btn btn-secondary" onClick={() => setShowWxidSelect(false)}>取消</button>
+        {/* 多账号选择对话框 */}
+        {showWxidSelect && wxidOptions.length > 1 && (
+          <div className="wxid-dialog-overlay" onClick={() => setShowWxidSelect(false)}>
+            <div className="wxid-dialog" onClick={(e) => e.stopPropagation()}>
+              <div className="wxid-dialog-header">
+                <h3>检测到多个微信账号</h3>
+                <p>请选择要使用的账号</p>
+              </div>
+              <div className="wxid-dialog-list">
+                {wxidOptions.map((opt) => (
+                  <div
+                    key={opt.wxid}
+                    className={`wxid-dialog-item ${opt.wxid === wxid ? 'active' : ''}`}
+                    onClick={() => handleSelectWxid(opt.wxid)}
+                  >
+                    <span className="wxid-id">{opt.wxid}</span>
+                    <span className="wxid-date">最后修改 {new Date(opt.modifiedTime).toLocaleString()}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="wxid-dialog-footer">
+                <button className="btn btn-secondary" onClick={() => setShowWxidSelect(false)}>取消</button>
+              </div>
             </div>
           </div>
+        )}
+
+        <div className="settings-header">
+          <div className="settings-title-block">
+            <h1>设置</h1>
+          </div>
+          <div className="settings-actions">
+            <button className="btn btn-secondary" onClick={handleTestConnection} disabled={isLoading || isTesting}>
+              <Plug size={16} /> {isTesting ? '测试中...' : '测试连接'}
+            </button>
+            {onClose && (
+              <button type="button" className="settings-close-btn" onClick={onClose} aria-label="关闭设置">
+                <X size={18} />
+              </button>
+            )}
+          </div>
         </div>
-      )}
 
-      <div className="settings-header">
-        <h1>设置</h1>
-        <div className="settings-actions">
-          <button className="btn btn-secondary" onClick={handleTestConnection} disabled={isLoading || isTesting}>
-            <Plug size={16} /> {isTesting ? '测试中...' : '测试连接'}
-          </button>
+        <div className="settings-layout">
+          <div className="settings-tabs" role="tablist" aria-label="设置项">
+            {tabs.map(tab => (
+              <button
+                key={tab.id}
+                className={`tab-btn ${activeTab === tab.id ? 'active' : ''}`}
+                onClick={() => setActiveTab(tab.id)}
+              >
+                <tab.icon size={16} />
+                <span>{tab.label}</span>
+              </button>
+            ))}
+          </div>
+
+          <div className="settings-body">
+            {activeTab === 'appearance' && renderAppearanceTab()}
+            {activeTab === 'notification' && renderNotificationTab()}
+            {activeTab === 'database' && renderDatabaseTab()}
+            {activeTab === 'models' && renderModelsTab()}
+            {activeTab === 'cache' && renderCacheTab()}
+            {activeTab === 'api' && renderApiTab()}
+            {activeTab === 'analytics' && renderAnalyticsTab()}
+            {activeTab === 'security' && renderSecurityTab()}
+            {activeTab === 'about' && renderAboutTab()}
+          </div>
         </div>
       </div>
-
-      <div className="settings-tabs">
-        {tabs.map(tab => (
-          <button key={tab.id} className={`tab-btn ${activeTab === tab.id ? 'active' : ''}`} onClick={() => setActiveTab(tab.id)}>
-            <tab.icon size={16} />
-            <span>{tab.label}</span>
-          </button>
-        ))}
-      </div>
-
-      <div className="settings-body">
-        {activeTab === 'appearance' && renderAppearanceTab()}
-        {activeTab === 'notification' && renderNotificationTab()}
-        {activeTab === 'database' && renderDatabaseTab()}
-        {activeTab === 'models' && renderModelsTab()}
-        {activeTab === 'cache' && renderCacheTab()}
-        {activeTab === 'api' && renderApiTab()}
-        {activeTab === 'analytics' && renderAnalyticsTab()}
-        {activeTab === 'security' && renderSecurityTab()}
-        {activeTab === 'about' && renderAboutTab()}
-      </div>
-
     </div>
   )
 }

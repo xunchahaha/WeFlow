@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
-import { Home, MessageSquare, BarChart3, Users, FileText, Settings, ChevronLeft, ChevronRight, Download, Aperture, UserCircle, Lock, LockOpen, ChevronUp, Trash2 } from 'lucide-react'
+import { Home, MessageSquare, BarChart3, FileText, Settings, Download, Aperture, UserCircle, Lock, LockOpen, ChevronUp, Trash2 } from 'lucide-react'
 import { useAppStore } from '../stores/appStore'
 import * as configService from '../services/config'
 import { onExportSessionStatus, requestExportSessionStatus } from '../services/exportBridge'
@@ -62,10 +62,13 @@ const normalizeAccountId = (value?: string | null): string => {
   return suffixMatch ? suffixMatch[1] : trimmed
 }
 
-function Sidebar() {
+interface SidebarProps {
+  collapsed: boolean
+}
+
+function Sidebar({ collapsed }: SidebarProps) {
   const location = useLocation()
   const navigate = useNavigate()
-  const [collapsed, setCollapsed] = useState(false)
   const [authEnabled, setAuthEnabled] = useState(false)
   const [activeExportTaskCount, setActiveExportTaskCount] = useState(0)
   const [userProfile, setUserProfile] = useState<SidebarUserProfile>({
@@ -279,6 +282,15 @@ function Sidebar() {
     setShowClearAccountDialog(true)
   }
 
+  const openSettingsFromAccountMenu = () => {
+    setIsAccountMenuOpen(false)
+    navigate('/settings', {
+      state: {
+        backgroundLocation: location
+      }
+    })
+  }
+
   const handleConfirmClearAccountData = async () => {
     if (!canConfirmClear || isClearingAccountData) return
     setIsClearingAccountData(true)
@@ -375,24 +387,14 @@ function Sidebar() {
           <span className="nav-label">通讯录</span>
         </NavLink>
 
-        {/* 私聊分析 */}
+        {/* 聊天分析 */}
         <NavLink
           to="/analytics"
           className={`nav-item ${isActive('/analytics') ? 'active' : ''}`}
-          title={collapsed ? '私聊分析' : undefined}
+          title={collapsed ? '聊天分析' : undefined}
         >
           <span className="nav-icon"><BarChart3 size={20} /></span>
-          <span className="nav-label">私聊分析</span>
-        </NavLink>
-
-        {/* 群聊分析 */}
-        <NavLink
-          to="/group-analytics"
-          className={`nav-item ${isActive('/group-analytics') ? 'active' : ''}`}
-          title={collapsed ? '群聊分析' : undefined}
-        >
-          <span className="nav-icon"><Users size={20} /></span>
-          <span className="nav-label">群聊分析</span>
+          <span className="nav-label">聊天分析</span>
         </NavLink>
 
         {/* 年度报告 */}
@@ -427,16 +429,48 @@ function Sidebar() {
       </nav>
 
       <div className="sidebar-footer">
+        <button
+          className="nav-item"
+          onClick={() => {
+            if (authEnabled) {
+              setLocked(true)
+              return
+            }
+            navigate('/settings', {
+              state: {
+                initialTab: 'security',
+                backgroundLocation: location
+              }
+            })
+          }}
+          title={collapsed ? (authEnabled ? '锁定' : '未锁定') : undefined}
+        >
+          <span className="nav-icon">{authEnabled ? <Lock size={20} /> : <LockOpen size={20} />}</span>
+          <span className="nav-label">{authEnabled ? '锁定' : '未锁定'}</span>
+        </button>
+
         <div className="sidebar-user-card-wrap" ref={accountCardWrapRef}>
           {isAccountMenuOpen && (
-            <button
-              className="sidebar-user-clear-trigger"
-              onClick={openClearAccountDialog}
-              type="button"
-            >
-              <Trash2 size={14} />
-              <span>清除此账号所有数据</span>
-            </button>
+            <div className="sidebar-user-menu" role="menu" aria-label="账号菜单">
+              <button
+                className="sidebar-user-menu-item"
+                onClick={openSettingsFromAccountMenu}
+                type="button"
+                role="menuitem"
+              >
+                <Settings size={14} />
+                <span>设置</span>
+              </button>
+              <button
+                className="sidebar-user-menu-item danger"
+                onClick={openClearAccountDialog}
+                type="button"
+                role="menuitem"
+              >
+                <Trash2 size={14} />
+                <span>清除数据</span>
+              </button>
+            </div>
           )}
           <div
             className={`sidebar-user-card ${isAccountMenuOpen ? 'menu-open' : ''}`}
@@ -465,40 +499,6 @@ function Sidebar() {
             )}
           </div>
         </div>
-
-        <button
-          className="nav-item"
-          onClick={() => {
-            if (authEnabled) {
-              setLocked(true)
-              return
-            }
-            navigate('/settings', { state: { initialTab: 'security' } })
-          }}
-          title={collapsed ? (authEnabled ? '锁定' : '未锁定') : undefined}
-        >
-          <span className="nav-icon">{authEnabled ? <Lock size={20} /> : <LockOpen size={20} />}</span>
-          <span className="nav-label">{authEnabled ? '锁定' : '未锁定'}</span>
-        </button>
-
-        <NavLink
-          to="/settings"
-          className={`nav-item ${isActive('/settings') ? 'active' : ''}`}
-          title={collapsed ? '设置' : undefined}
-        >
-          <span className="nav-icon">
-            <Settings size={20} />
-          </span>
-          <span className="nav-label">设置</span>
-        </NavLink>
-
-        <button
-          className="collapse-btn"
-          onClick={() => setCollapsed(!collapsed)}
-          title={collapsed ? '展开菜单' : '收起菜单'}
-        >
-          {collapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
-        </button>
       </div>
 
       {showClearAccountDialog && (

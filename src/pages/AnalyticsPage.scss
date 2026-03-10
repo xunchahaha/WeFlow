@@ -1,3 +1,15 @@
+.analytics-page-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 100%;
+
+  .loading-container,
+  .error-container {
+    flex: 1;
+  }
+}
+
 // 加载和错误状态
 .loading-container,
 .error-container {
@@ -47,24 +59,6 @@
   }
 
   .error-actions {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-}
-
-.page-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 16px;
-
-  h1 {
-    margin: 0;
-  }
-
-  .header-actions {
     display: flex;
     align-items: center;
     gap: 8px;

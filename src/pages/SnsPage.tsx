@@ -10,6 +10,12 @@ import JumpToDatePopover from '../components/JumpToDatePopover'
 import { ExportDateRangeDialog } from '../components/Export/ExportDateRangeDialog'
 import * as configService from '../services/config'
 import {
+    finishBackgroundTask,
+    isBackgroundTaskCancelRequested,
+    registerBackgroundTask,
+    updateBackgroundTask
+} from '../services/backgroundTaskMonitor'
+import {
     createExportDateRangeSelectionFromPreset,
     getExportDateRangeLabel,
     type ExportDateRangeSelection
@@ -57,6 +63,7 @@ interface SnsOverviewStats {
 }
 
 type OverviewStatsStatus = 'loading' | 'ready' | 'error'
+type SnsExportScope = { kind: 'all' } | { kind: 'selected'; usernames: string[] }
 
 const SIDEBAR_USER_PROFILE_CACHE_KEY = 'sidebar_user_profile_cache_v1'
 
@@ -117,6 +124,7 @@ export default function SnsPage() {
         total: 0,
         running: false
     })
+    const [selectedContactUsernames, setSelectedContactUsernames] = useState<string[]>([])
     const [currentUserProfile, setCurrentUserProfile] = useState<SidebarUserProfile>(() => readSidebarUserProfileCache() || {
         wxid: '',
         displayName: ''
@@ -134,6 +142,7 @@ export default function SnsPage() {
 
     // 导出相关状态
     const [showExportDialog, setShowExportDialog] = useState(false)
+    const [exportScope, setExportScope] = useState<SnsExportScope>({ kind: 'all' })
     const [exportFormat, setExportFormat] = useState<'json' | 'html' | 'arkmejson'>('html')
     const [exportFolder, setExportFolder] = useState('')
     const [exportImages, setExportImages] = useState(false)
@@ -164,9 +173,11 @@ export default function SnsPage() {
     const overviewStatsStatusRef = useRef<OverviewStatsStatus>(overviewStatsStatus)
     const searchKeywordRef = useRef(searchKeyword)
     const jumpTargetDateRef = useRef<Date | undefined>(jumpTargetDate)
+    const selectedContactUsernamesRef = useRef<string[]>(selectedContactUsernames)
     const cacheScopeKeyRef = useRef('')
     const snsUserPostCountsCacheScopeKeyRef = useRef('')
     const scrollAdjustmentRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null)
+    const pendingResetFeedRef = useRef(false)
     const contactsLoadTokenRef = useRef(0)
     const contactsCountHydrationTokenRef = useRef(0)
     const contactsCountBatchTimerRef = useRef<number | null>(null)
@@ -181,6 +192,13 @@ export default function SnsPage() {
         contactsRef.current = contacts
     }, [contacts])
     useEffect(() => {
+        const contactLookup = new Set(contacts.map((contact) => contact.username))
+        setSelectedContactUsernames((prev) => {
+            const next = prev.filter((username) => contactLookup.has(username))
+            return next.length === prev.length ? prev : next
+        })
+    }, [contacts])
+    useEffect(() => {
         overviewStatsRef.current = overviewStats
     }, [overviewStats])
     useEffect(() => {
@@ -192,6 +210,9 @@ export default function SnsPage() {
     useEffect(() => {
         jumpTargetDateRef.current = jumpTargetDate
     }, [jumpTargetDate])
+    useEffect(() => {
+        selectedContactUsernamesRef.current = selectedContactUsernames
+    }, [selectedContactUsernames])
     useEffect(() => {
         if (!showJumpPopover) {
             setJumpPopoverDate(jumpTargetDate || new Date())
@@ -370,6 +391,31 @@ export default function SnsPage() {
         return contacts.find((contact) => contact.username === normalizedTargetUsername) || null
     }, [authorTimelineTarget, contacts])
 
+    const exportSelectedContactsSummary = useMemo(() => {
+        if (exportScope.kind !== 'selected' || exportScope.usernames.length === 0) return ''
+        const contactMap = new Map(contacts.map((contact) => [contact.username, contact]))
+        const names = exportScope.usernames.map((username) => contactMap.get(username)?.displayName || username)
+        if (names.length <= 2) return names.join('、')
+        return `${names.slice(0, 2).join('、')} 等 ${names.length} 位联系人`
+    }, [contacts, exportScope])
+
+    const selectedFeedContactsSummary = useMemo(() => {
+        if (selectedContactUsernames.length === 0) return ''
+        const contactMap = new Map(contacts.map((contact) => [contact.username, contact]))
+        const names = selectedContactUsernames.map((username) => contactMap.get(username)?.displayName || username)
+        if (names.length <= 2) return names.join('、')
+        return `${names.slice(0, 2).join('、')} 等 ${names.length} 人`
+    }, [contacts, selectedContactUsernames])
+
+    const selectedContactUsernameSet = useMemo(() => (
+        new Set(selectedContactUsernames.map((username) => normalizeAccountId(username)))
+    ), [selectedContactUsernames])
+
+    const visiblePosts = useMemo(() => {
+        if (selectedContactUsernameSet.size === 0) return posts
+        return posts.filter((post) => selectedContactUsernameSet.has(normalizeAccountId(post.username)))
+    }, [posts, selectedContactUsernameSet])
+
     const myTimelineCount = useMemo(() => {
         if (resolvedCurrentUserContact?.postCountStatus === 'ready' && typeof resolvedCurrentUserContact.postCount === 'number') {
             return normalizePostCount(resolvedCurrentUserContact.postCount)
@@ -383,6 +429,10 @@ export default function SnsPage() {
             : overviewStatsStatus === 'loading' || contactsLoading
     )
 
+    const canStartExport = Boolean(exportFolder) && !isExporting && (
+        exportScope.kind === 'all' || exportScope.usernames.length > 0
+    )
+
     const openCurrentUserTimeline = useCallback(() => {
         if (!resolvedCurrentUserContact) return
         setAuthorTimelineTarget({
@@ -393,7 +443,11 @@ export default function SnsPage() {
     }, [currentUserProfile.avatarUrl, currentUserProfile.displayName, resolvedCurrentUserContact])
 
     const isDefaultViewNow = useCallback(() => {
-        return !searchKeywordRef.current.trim() && !jumpTargetDateRef.current
+        return (
+            !searchKeywordRef.current.trim() &&
+            !jumpTargetDateRef.current &&
+            selectedContactUsernamesRef.current.length === 0
+        )
     }, [])
 
     const ensureSnsCacheScopeKey = useCallback(async () => {
@@ -555,9 +609,23 @@ export default function SnsPage() {
 
     const exportDateRangeLabel = useMemo(() => getExportDateRangeLabel(exportDateRangeSelection), [exportDateRangeSelection])
 
+    const openExportDialog = useCallback((scope: SnsExportScope) => {
+        setExportScope(scope)
+        setExportResult(null)
+        setExportProgress(null)
+        setExportDateRangeSelection(createExportDateRangeSelectionFromPreset('all'))
+        setIsExportDateRangeDialogOpen(false)
+        setShowExportDialog(true)
+    }, [])
+
     const loadPosts = useCallback(async (options: { reset?: boolean, direction?: 'older' | 'newer' } = {}) => {
         const { reset = false, direction = 'older' } = options
-        if (loadingRef.current) return
+        if (loadingRef.current) {
+            if (reset) {
+                pendingResetFeedRef.current = true
+            }
+            return
+        }
 
         loadingRef.current = true
         if (direction === 'newer') setLoadingNewer(true)
@@ -565,13 +633,19 @@ export default function SnsPage() {
 
         try {
             const limit = 20
+            const currentSearchKeyword = searchKeywordRef.current
+            const currentJumpTargetDate = jumpTargetDateRef.current
+            const currentSelectedContactUsernames = selectedContactUsernamesRef.current
+            const selectedUsernames = currentSelectedContactUsernames.length > 0
+                ? [...currentSelectedContactUsernames]
+                : undefined
             let startTs: number | undefined = undefined
             let endTs: number | undefined = undefined
 
             if (reset) {
                 // If jumping to date, set endTs to end of that day
-                if (jumpTargetDate) {
-                    endTs = Math.floor(jumpTargetDate.getTime() / 1000) + 86399
+                if (currentJumpTargetDate) {
+                    endTs = Math.floor(currentJumpTargetDate.getTime() / 1000) + 86399
                 }
             } else if (direction === 'newer') {
                 const currentPosts = postsRef.current
@@ -581,8 +655,8 @@ export default function SnsPage() {
                     const result = await window.electronAPI.sns.getTimeline(
                         limit,
                         0,
-                        undefined,
-                        searchKeyword,
+                        selectedUsernames,
+                        currentSearchKeyword,
                         topTs + 1,
                         undefined
                     );
@@ -622,8 +696,8 @@ export default function SnsPage() {
             const result = await window.electronAPI.sns.getTimeline(
                 limit,
                 0,
-                undefined,
-                searchKeyword,
+                selectedUsernames,
+                currentSearchKeyword,
                 startTs, // default undefined
                 endTs
             )
@@ -637,7 +711,7 @@ export default function SnsPage() {
                     // Check for newer items above topTs
                     const topTs = result.timeline[0]?.createTime || 0;
                     if (topTs > 0) {
-                        const checkResult = await window.electronAPI.sns.getTimeline(1, 0, undefined, searchKeyword, topTs + 1, undefined);
+                        const checkResult = await window.electronAPI.sns.getTimeline(1, 0, selectedUsernames, currentSearchKeyword, topTs + 1, undefined);
                         setHasNewer(!!(checkResult.success && checkResult.timeline && checkResult.timeline.length > 0));
                     } else {
                         setHasNewer(false);
@@ -663,8 +737,12 @@ export default function SnsPage() {
             setLoading(false)
             setLoadingNewer(false)
             loadingRef.current = false
+            if (pendingResetFeedRef.current) {
+                pendingResetFeedRef.current = false
+                void loadPosts({ reset: true })
+            }
         }
-    }, [jumpTargetDate, persistSnsPageCache, searchKeyword])
+    }, [persistSnsPageCache])
 
     const stopContactsCountHydration = useCallback((resetProgress = false) => {
         contactsCountHydrationTokenRef.current += 1
@@ -728,9 +806,23 @@ export default function SnsPage() {
         })
         if (pendingTargets.length === 0) return
 
+        const taskId = registerBackgroundTask({
+            sourcePage: 'sns',
+            title: '朋友圈联系人计数补算',
+            detail: `正在补算 ${pendingTargets.length} 个联系人朋友圈条数`,
+            progressText: `${preResolved}/${totalTargets}`,
+            cancelable: true
+        })
+
         let normalizedCounts: Record<string, number> = {}
         try {
             const result = await window.electronAPI.sns.getUserPostCounts()
+            if (isBackgroundTaskCancelRequested(taskId)) {
+                finishBackgroundTask(taskId, 'canceled', {
+                    detail: '已停止后续加载，当前计数查询结束后不再继续分批写入'
+                })
+                return
+            }
             if (runToken !== contactsCountHydrationTokenRef.current) return
             if (result.success && result.counts) {
                 normalizedCounts = Object.fromEntries(
@@ -747,12 +839,28 @@ export default function SnsPage() {
             }
         } catch (error) {
             console.error('Failed to load contact post counts:', error)
+            finishBackgroundTask(taskId, 'failed', {
+                detail: String(error)
+            })
+            return
         }
 
         let resolved = preResolved
         let cursor = 0
         const applyBatch = () => {
             if (runToken !== contactsCountHydrationTokenRef.current) return
+            if (isBackgroundTaskCancelRequested(taskId)) {
+                finishBackgroundTask(taskId, 'canceled', {
+                    detail: `已停止后续加载，已完成 ${resolved}/${totalTargets}`
+                })
+                contactsCountBatchTimerRef.current = null
+                setContactsCountProgress({
+                    resolved,
+                    total: totalTargets,
+                    running: false
+                })
+                return
+            }
 
             const batch = pendingTargets.slice(cursor, cursor + CONTACT_COUNT_BATCH_SIZE)
             if (batch.length === 0) {
@@ -762,6 +870,10 @@ export default function SnsPage() {
                     running: false
                 })
                 contactsCountBatchTimerRef.current = null
+                finishBackgroundTask(taskId, 'completed', {
+                    detail: '联系人朋友圈条数补算完成',
+                    progressText: `${totalTargets}/${totalTargets}`
+                })
                 return
             }
 
@@ -789,6 +901,10 @@ export default function SnsPage() {
                 total: totalTargets,
                 running: resolved < totalTargets
             })
+            updateBackgroundTask(taskId, {
+                detail: `已完成 ${resolved}/${totalTargets} 个联系人朋友圈条数补算`,
+                progressText: `${resolved}/${totalTargets}`
+            })
 
             if (cursor < totalTargets) {
                 contactsCountBatchTimerRef.current = window.setTimeout(applyBatch, CONTACT_COUNT_SORT_DEBOUNCE_MS)
@@ -803,6 +919,13 @@ export default function SnsPage() {
     // Load Contacts（先按最近会话显示联系人，再异步统计朋友圈条数并增量排序）
     const loadContacts = useCallback(async () => {
         const requestToken = ++contactsLoadTokenRef.current
+        const taskId = registerBackgroundTask({
+            sourcePage: 'sns',
+            title: '朋友圈联系人列表加载',
+            detail: '准备读取联系人缓存与最近会话',
+            progressText: '初始化',
+            cancelable: true
+        })
         stopContactsCountHydration(true)
         setContactsLoading(true)
         try {
@@ -845,10 +968,20 @@ export default function SnsPage() {
                 })
             }
 
+            updateBackgroundTask(taskId, {
+                detail: '正在读取联系人与最近会话数据',
+                progressText: '联系人快照'
+            })
             const [contactsResult, sessionsResult] = await Promise.all([
                 window.electronAPI.chat.getContacts(),
                 window.electronAPI.chat.getSessions()
             ])
+            if (isBackgroundTaskCancelRequested(taskId)) {
+                finishBackgroundTask(taskId, 'canceled', {
+                    detail: '已停止后续加载，当前联系人查询结束后未继续补齐'
+                })
+                return
+            }
             const contactMap = new Map<string, Contact>()
             const sessionTimestampMap = new Map<string, number>()
 
@@ -904,7 +1037,17 @@ export default function SnsPage() {
 
             // 用 enrichSessionsContactInfo 统一补充头像和显示名
             if (allUsernames.length > 0) {
+                updateBackgroundTask(taskId, {
+                    detail: '正在补齐联系人显示名与头像',
+                    progressText: '联系人补齐'
+                })
                 const enriched = await window.electronAPI.chat.enrichSessionsContactInfo(allUsernames)
+                if (isBackgroundTaskCancelRequested(taskId)) {
+                    finishBackgroundTask(taskId, 'canceled', {
+                        detail: '已停止后续加载，联系人补齐未继续写入'
+                    })
+                    return
+                }
                 if (enriched.success && enriched.contacts) {
                     contactsList = contactsList.map((contact) => {
                         const extra = enriched.contacts?.[contact.username]
@@ -931,10 +1074,17 @@ export default function SnsPage() {
                     })
                 }
             }
+            finishBackgroundTask(taskId, 'completed', {
+                detail: `朋友圈联系人列表加载完成，共 ${contactsList.length} 人`,
+                progressText: `${contactsList.length} 人`
+            })
         } catch (error) {
             if (requestToken !== contactsLoadTokenRef.current) return
             console.error('Failed to load contacts:', error)
             stopContactsCountHydration(true)
+            finishBackgroundTask(taskId, 'failed', {
+                detail: String(error)
+            })
         } finally {
             if (requestToken === contactsLoadTokenRef.current) {
                 setContactsLoading(false)
@@ -961,6 +1111,23 @@ export default function SnsPage() {
             avatarUrl: contact.avatarUrl
         })
     }, [])
+
+    const toggleContactSelected = useCallback((contact: Contact) => {
+        setSelectedContactUsernames((prev) => (
+            prev.includes(contact.username)
+                ? prev.filter((username) => username !== contact.username)
+                : [...prev, contact.username]
+        ))
+    }, [])
+
+    const clearSelectedContacts = useCallback(() => {
+        setSelectedContactUsernames([])
+    }, [])
+
+    const openSelectedContactsExport = useCallback(() => {
+        if (selectedContactUsernames.length === 0) return
+        openExportDialog({ kind: 'selected', usernames: [...selectedContactUsernames] })
+    }, [openExportDialog, selectedContactUsernames])
 
     const handlePostDelete = useCallback((postId: string, username: string) => {
         setPosts(prev => {
@@ -1029,6 +1196,7 @@ export default function SnsPage() {
             stopContactsCountHydration(true)
             setContacts([])
             setPosts([]); setHasMore(true); setHasNewer(false);
+            setSelectedContactUsernames([])
             setSearchKeyword(''); setJumpTargetDate(undefined);
             void hydrateSnsPageCache()
             loadContacts();
@@ -1045,6 +1213,21 @@ export default function SnsPage() {
         }, 500)
         return () => clearTimeout(timer)
     }, [searchKeyword, jumpTargetDate, loadPosts])
+
+    const selectedContactUsernamesKey = useMemo(
+        () => selectedContactUsernames.join('||'),
+        [selectedContactUsernames]
+    )
+
+    const hasInitializedSelectedFeedFilterRef = useRef(false)
+
+    useEffect(() => {
+        if (!hasInitializedSelectedFeedFilterRef.current) {
+            hasInitializedSelectedFeedFilterRef.current = true
+            return
+        }
+        loadPosts({ reset: true })
+    }, [loadPosts, selectedContactUsernamesKey])
 
     const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
         const { scrollTop, clientHeight, scrollHeight } = e.currentTarget
@@ -1186,13 +1369,7 @@ export default function SnsPage() {
                                 <Shield size={20} />
                             </button>
                             <button
-                                onClick={() => {
-                                    setExportResult(null)
-                                    setExportProgress(null)
-                                    setExportDateRangeSelection(createExportDateRangeSelectionFromPreset('all'))
-                                    setIsExportDateRangeDialogOpen(false)
-                                    setShowExportDialog(true)
-                                }}
+                                onClick={() => openExportDialog({ kind: 'all' })}
                                 className="icon-btn export-btn"
                                 title="导出朋友圈"
                             >
@@ -1214,6 +1391,20 @@ export default function SnsPage() {
                         </div>
                     </div>
 
+                    {selectedContactUsernames.length > 0 && (
+                        <div className="feed-contact-filter-bar">
+                            <span className="feed-contact-filter-label">仅显示</span>
+                            <span className="feed-contact-filter-summary">{selectedFeedContactsSummary} 的动态</span>
+                            <button
+                                type="button"
+                                className="feed-contact-filter-clear"
+                                onClick={clearSelectedContacts}
+                            >
+                                清空筛选
+                            </button>
+                        </div>
+                    )}
+
                     <div className="sns-posts-scroll" onScroll={handleScroll} onWheel={handleWheel} ref={postsContainerRef}>
                         {loadingNewer && (
                             <div className="status-indicator loading-newer">
@@ -1229,7 +1420,7 @@ export default function SnsPage() {
                         )}
 
                         <div className="posts-list">
-                            {posts.map(post => (
+                            {visiblePosts.map(post => (
                                 <SnsPostItem
                                     key={post.id}
                                     post={{ ...post, isProtected: triggerInstalled === true }}
@@ -1247,7 +1438,7 @@ export default function SnsPage() {
                             ))}
                         </div>
 
-                        {loading && posts.length === 0 && (
+                        {loading && visiblePosts.length === 0 && (
                             <div className="initial-loading">
                                 <div className="loading-pulse">
                                     <div className="pulse-circle"></div>
@@ -1256,24 +1447,26 @@ export default function SnsPage() {
                             </div>
                         )}
 
-                        {loading && posts.length > 0 && (
+                        {loading && visiblePosts.length > 0 && (
                             <div className="status-indicator loading-more">
                                 <RefreshCw size={16} className="spinning" />
                                 <span>正在加载更多...</span>
                             </div>
                         )}
 
-                        {!hasMore && posts.length > 0 && (
+                        {!hasMore && visiblePosts.length > 0 && (
                             <div className="status-indicator no-more">或许过往已无可溯洄，但好在还有可以与你相遇的明天</div>
                         )}
 
-                        {!loading && posts.length === 0 && (
+                        {!loading && visiblePosts.length === 0 && (
                             <div className="no-results">
                                 <div className="no-results-icon"><Search size={48} /></div>
                                 <p>未找到相关动态</p>
-                                {(searchKeyword || jumpTargetDate) && (
+                                {(searchKeyword || jumpTargetDate || selectedContactUsernames.length > 0) && (
                                     <button onClick={() => {
-                                        setSearchKeyword(''); setJumpTargetDate(undefined);
+                                        setSearchKeyword('')
+                                        setJumpTargetDate(undefined)
+                                        clearSelectedContacts()
                                     }} className="reset-inline">
                                         重置筛选条件
                                     </button>
@@ -1299,7 +1492,12 @@ export default function SnsPage() {
                 setContactSearch={setContactSearch}
                 loading={contactsLoading}
                 contactsCountProgress={contactsCountProgress}
+                selectedContactUsernames={selectedContactUsernames}
+                activeContactUsername={authorTimelineTarget?.username}
                 onOpenContactTimeline={openContactTimeline}
+                onToggleContactSelected={toggleContactSelected}
+                onClearSelectedContacts={clearSelectedContacts}
+                onExportSelectedContacts={openSelectedContactsExport}
             />
 
             {/* Dialogs and Overlays */}
@@ -1444,9 +1642,12 @@ export default function SnsPage() {
 
                         <div className="export-dialog-body">
                             {/* 筛选条件提示 */}
-                            {searchKeyword && (
+                            {(searchKeyword || exportScope.kind === 'selected') && (
                                 <div className="export-filter-info">
-                                    <span className="filter-badge">筛选导出</span>
+                                    <span className="filter-badge">导出范围</span>
+                                    {exportScope.kind === 'selected' && (
+                                        <span className="filter-tag">联系人: {exportSelectedContactsSummary}</span>
+                                    )}
                                     {searchKeyword && <span className="filter-tag">关键词: "{searchKeyword}"</span>}
                                 </div>
                             )}
@@ -1572,7 +1773,7 @@ export default function SnsPage() {
                                     {/* 同步提示 */}
                                     <div className="export-sync-hint">
                                         <Info size={14} />
-                                        <span>将同步主页面的关键词搜索</span>
+                                        <span>{exportScope.kind === 'selected' ? '将同步主页面的关键词搜索，并仅导出所选联系人' : '将同步主页面的关键词搜索'}</span>
                                     </div>
 
                                     {/* 进度条 */}
@@ -1599,7 +1800,7 @@ export default function SnsPage() {
                                         </button>
                                         <button
                                             className="export-start-btn"
-                                            disabled={!exportFolder || isExporting}
+                                            disabled={!canStartExport}
                                             onClick={async () => {
                                                 setIsExporting(true)
                                                 setExportProgress({ current: 0, total: 0, status: '准备导出...' })
@@ -1614,6 +1815,7 @@ export default function SnsPage() {
                                                     const result = await window.electronAPI.sns.exportTimeline({
                                                         outputDir: exportFolder,
                                                         format: exportFormat,
+                                                        usernames: exportScope.kind === 'selected' ? exportScope.usernames : undefined,
                                                         keyword: searchKeyword || undefined,
                                                         exportImages,
                                                         exportLivePhotos,

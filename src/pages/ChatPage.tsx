@@ -15,6 +15,12 @@ import { ContactSnsTimelineDialog } from '../components/Sns/ContactSnsTimelineDi
 import { type ContactSnsTimelineTarget, isSingleContactSession } from '../components/Sns/contactSnsTimeline'
 import * as configService from '../services/config'
 import {
+  finishBackgroundTask,
+  isBackgroundTaskCancelRequested,
+  registerBackgroundTask,
+  updateBackgroundTask
+} from '../services/backgroundTaskMonitor'
+import {
   emitOpenSingleExport,
   onExportSessionStatus,
   onSingleExportDialogStatus,
@@ -1067,6 +1073,13 @@ function ChatPage(props: ChatPageProps) {
   const loadSessionDetail = useCallback(async (sessionId: string) => {
     const normalizedSessionId = String(sessionId || '').trim()
     if (!normalizedSessionId) return
+    const taskId = registerBackgroundTask({
+      sourcePage: 'chat',
+      title: '聊天页会话详情统计',
+      detail: `准备读取 ${sessionMapRef.current.get(normalizedSessionId)?.displayName || normalizedSessionId} 的详情`,
+      progressText: '基础信息',
+      cancelable: true
+    })
 
     const requestSeq = ++detailRequestSeqRef.current
     const mappedSession = sessionMapRef.current.get(normalizedSessionId) || sessionsRef.current.find((s) => s.username === normalizedSessionId)
@@ -1130,8 +1143,23 @@ function ChatPage(props: ChatPageProps) {
     }
 
     try {
+      updateBackgroundTask(taskId, {
+        detail: '正在读取会话基础详情',
+        progressText: '基础信息'
+      })
       const result = await window.electronAPI.chat.getSessionDetailFast(normalizedSessionId)
-      if (requestSeq !== detailRequestSeqRef.current) return
+      if (isBackgroundTaskCancelRequested(taskId)) {
+        finishBackgroundTask(taskId, 'canceled', {
+          detail: '已停止后续加载，当前基础查询结束后未继续补充统计'
+        })
+        return
+      }
+      if (requestSeq !== detailRequestSeqRef.current) {
+        finishBackgroundTask(taskId, 'canceled', {
+          detail: '会话已切换，旧详情任务已停止'
+        })
+        return
+      }
       if (result.success && result.detail) {
         setSessionDetail((prev) => ({
           wxid: normalizedSessionId,
@@ -1170,6 +1198,10 @@ function ChatPage(props: ChatPageProps) {
     }
 
     try {
+      updateBackgroundTask(taskId, {
+        detail: '正在读取补充信息与导出统计',
+        progressText: '补充统计'
+      })
       const [extraResultSettled, statsResultSettled] = await Promise.allSettled([
         window.electronAPI.chat.getSessionDetailExtra(normalizedSessionId),
         window.electronAPI.chat.getExportSessionStats(
@@ -1178,7 +1210,18 @@ function ChatPage(props: ChatPageProps) {
         )
       ])
 
-      if (requestSeq !== detailRequestSeqRef.current) return
+      if (isBackgroundTaskCancelRequested(taskId)) {
+        finishBackgroundTask(taskId, 'canceled', {
+          detail: '已停止后续加载，补充统计结果未继续写入'
+        })
+        return
+      }
+      if (requestSeq !== detailRequestSeqRef.current) {
+        finishBackgroundTask(taskId, 'canceled', {
+          detail: '会话已切换，旧补充统计任务已停止'
+        })
+        return
+      }
 
       if (extraResultSettled.status === 'fulfilled' && extraResultSettled.value.success) {
         const detail = extraResultSettled.value.detail
@@ -1214,8 +1257,15 @@ function ChatPage(props: ChatPageProps) {
           })
         }
       }
+      finishBackgroundTask(taskId, 'completed', {
+        detail: '聊天页会话详情统计完成',
+        progressText: '已完成'
+      })
     } catch (e) {
       console.error('加载会话详情补充统计失败:', e)
+      finishBackgroundTask(taskId, 'failed', {
+        detail: String(e)
+      })
     } finally {
       if (requestSeq === detailRequestSeqRef.current) {
         setIsLoadingDetailExtra(false)
@@ -1228,13 +1278,31 @@ function ChatPage(props: ChatPageProps) {
     if (!normalizedSessionId || isLoadingRelationStats) return
 
     const requestSeq = detailRequestSeqRef.current
+    const taskId = registerBackgroundTask({
+      sourcePage: 'chat',
+      title: '聊天页关系统计补算',
+      detail: `正在补算 ${normalizedSessionId} 的共同好友与关联数据`,
+      progressText: '关系统计',
+      cancelable: true
+    })
     setIsLoadingRelationStats(true)
     try {
       const relationResult = await window.electronAPI.chat.getExportSessionStats(
         [normalizedSessionId],
         { includeRelations: true, forceRefresh: true, preferAccurateSpecialTypes: true }
       )
-      if (requestSeq !== detailRequestSeqRef.current) return
+      if (isBackgroundTaskCancelRequested(taskId)) {
+        finishBackgroundTask(taskId, 'canceled', {
+          detail: '已停止后续加载，当前关系统计查询结束后未继续刷新'
+        })
+        return
+      }
+      if (requestSeq !== detailRequestSeqRef.current) {
+        finishBackgroundTask(taskId, 'canceled', {
+          detail: '会话已切换，旧关系统计任务已停止'
+        })
+        return
+      }
 
       const metric = relationResult.success && relationResult.data
         ? relationResult.data[normalizedSessionId] as SessionExportMetric | undefined
@@ -1254,11 +1322,26 @@ function ChatPage(props: ChatPageProps) {
         setIsRefreshingDetailStats(true)
         void (async () => {
           try {
+            updateBackgroundTask(taskId, {
+              detail: '正在刷新关系统计结果',
+              progressText: '关系统计刷新'
+            })
             const freshResult = await window.electronAPI.chat.getExportSessionStats(
               [normalizedSessionId],
               { includeRelations: true, forceRefresh: true, preferAccurateSpecialTypes: true }
             )
-            if (requestSeq !== detailRequestSeqRef.current) return
+            if (isBackgroundTaskCancelRequested(taskId)) {
+              finishBackgroundTask(taskId, 'canceled', {
+                detail: '已停止后续加载，刷新结果未继续写入'
+              })
+              return
+            }
+            if (requestSeq !== detailRequestSeqRef.current) {
+              finishBackgroundTask(taskId, 'canceled', {
+                detail: '会话已切换，旧关系统计刷新任务已停止'
+              })
+              return
+            }
             if (freshResult.success && freshResult.data) {
               const freshMetric = freshResult.data[normalizedSessionId] as SessionExportMetric | undefined
               const freshMeta = freshResult.cache?.[normalizedSessionId] as SessionExportCacheMeta | undefined
@@ -1266,17 +1349,32 @@ function ChatPage(props: ChatPageProps) {
                 applySessionDetailStats(normalizedSessionId, freshMetric, freshMeta, true)
               }
             }
+            finishBackgroundTask(taskId, 'completed', {
+              detail: '聊天页关系统计补算完成',
+              progressText: '已完成'
+            })
           } catch (error) {
             console.error('刷新会话关系统计失败:', error)
+            finishBackgroundTask(taskId, 'failed', {
+              detail: String(error)
+            })
           } finally {
             if (requestSeq === detailRequestSeqRef.current) {
               setIsRefreshingDetailStats(false)
             }
           }
         })()
+      } else {
+        finishBackgroundTask(taskId, 'completed', {
+          detail: '聊天页关系统计补算完成',
+          progressText: '已完成'
+        })
       }
     } catch (error) {
       console.error('加载会话关系统计失败:', error)
+      finishBackgroundTask(taskId, 'failed', {
+        detail: String(error)
+      })
     } finally {
       if (requestSeq === detailRequestSeqRef.current) {
         setIsLoadingRelationStats(false)
@@ -3225,7 +3323,7 @@ function ChatPage(props: ChatPageProps) {
 
   const handleGroupAnalytics = useCallback(() => {
     if (!currentSessionId || !isGroupChatSession(currentSessionId)) return
-    navigate('/group-analytics', {
+    navigate('/analytics/group', {
       state: {
         preselectGroupIds: [currentSessionId]
       }

@@ -1,11 +1,18 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, type ReactNode } from 'react'
 import { useLocation } from 'react-router-dom'
 import { Users, Clock, MessageSquare, Send, Inbox, Calendar, Loader2, RefreshCw, Medal, UserMinus, Search, X } from 'lucide-react'
 import ReactECharts from 'echarts-for-react'
 import { useAnalyticsStore } from '../stores/analyticsStore'
 import { useThemeStore } from '../stores/themeStore'
+import {
+  finishBackgroundTask,
+  isBackgroundTaskCancelRequested,
+  registerBackgroundTask,
+  updateBackgroundTask
+} from '../services/backgroundTaskMonitor'
 import './AnalyticsPage.scss'
 import { Avatar } from '../components/Avatar'
+import ChatAnalysisHeader from '../components/ChatAnalysisHeader'
 
 interface ExcludeCandidate {
   username: string
@@ -48,6 +55,13 @@ function AnalyticsPage() {
 
   const loadData = useCallback(async (forceRefresh = false) => {
     if (isLoaded && !forceRefresh) return
+    const taskId = registerBackgroundTask({
+      sourcePage: 'analytics',
+      title: forceRefresh ? '刷新分析看板' : '加载分析看板',
+      detail: '准备读取整体统计数据',
+      progressText: '整体统计',
+      cancelable: true
+    })
     setIsLoading(true)
     setError(null)
     setProgress(0)
@@ -60,27 +74,70 @@ function AnalyticsPage() {
 
     try {
       setLoadingStatus('正在统计消息数据...')
+      updateBackgroundTask(taskId, {
+        detail: '正在统计消息数据',
+        progressText: '整体统计'
+      })
       const statsResult = await window.electronAPI.analytics.getOverallStatistics(forceRefresh)
+      if (isBackgroundTaskCancelRequested(taskId)) {
+        finishBackgroundTask(taskId, 'canceled', {
+          detail: '已停止后续加载，当前页面分析流程已结束'
+        })
+        setIsLoading(false)
+        return
+      }
       if (statsResult.success && statsResult.data) {
         setStatistics(statsResult.data)
       } else {
         setError(statsResult.error || '加载统计数据失败')
+        finishBackgroundTask(taskId, 'failed', {
+          detail: statsResult.error || '加载统计数据失败'
+        })
         setIsLoading(false)
         return
       }
       setLoadingStatus('正在分析联系人排名...')
+      updateBackgroundTask(taskId, {
+        detail: '正在分析联系人排名',
+        progressText: '联系人排名'
+      })
       const rankingsResult = await window.electronAPI.analytics.getContactRankings(20)
+      if (isBackgroundTaskCancelRequested(taskId)) {
+        finishBackgroundTask(taskId, 'canceled', {
+          detail: '已停止后续加载，联系人排名后续步骤未继续'
+        })
+        setIsLoading(false)
+        return
+      }
       if (rankingsResult.success && rankingsResult.data) {
         setRankings(rankingsResult.data)
       }
       setLoadingStatus('正在计算时间分布...')
+      updateBackgroundTask(taskId, {
+        detail: '正在计算时间分布',
+        progressText: '时间分布'
+      })
       const timeResult = await window.electronAPI.analytics.getTimeDistribution()
+      if (isBackgroundTaskCancelRequested(taskId)) {
+        finishBackgroundTask(taskId, 'canceled', {
+          detail: '已停止后续加载，时间分布结果未继续写入'
+        })
+        setIsLoading(false)
+        return
+      }
       if (timeResult.success && timeResult.data) {
         setTimeDistribution(timeResult.data)
       }
       markLoaded()
+      finishBackgroundTask(taskId, 'completed', {
+        detail: '分析看板数据加载完成',
+        progressText: '已完成'
+      })
     } catch (e) {
       setError(String(e))
+      finishBackgroundTask(taskId, 'failed', {
+        detail: String(e)
+      })
     } finally {
       setIsLoading(false)
       if (removeListener) removeListener()
@@ -360,8 +417,28 @@ function AnalyticsPage() {
     }
   }
 
+  const renderPageShell = (content: ReactNode) => (
+    <div className="analytics-page-shell">
+      <ChatAnalysisHeader currentMode="private" />
+      {content}
+    </div>
+  )
+
+  const analyticsHeaderActions = (
+    <>
+      <button className="btn btn-secondary" onClick={handleRefresh} disabled={isLoading}>
+        <RefreshCw size={16} className={isLoading ? 'spin' : ''} />
+        {isLoading ? '刷新中...' : '刷新'}
+      </button>
+      <button className="btn btn-secondary" onClick={openExcludeDialog}>
+        <UserMinus size={16} />
+        排除好友{excludedUsernames.size > 0 ? ` (${excludedUsernames.size})` : ''}
+      </button>
+    </>
+  )
+
   if (isLoading && !isLoaded) {
-    return (
+    return renderPageShell(
       <div className="loading-container">
         <Loader2 size={48} className="spin" />
         <p className="loading-status">{loadingStatus}</p>
@@ -374,7 +451,7 @@ function AnalyticsPage() {
   }
 
   if (error && !isLoaded && isNoSessionError && excludedUsernames.size > 0) {
-    return (
+    return renderPageShell(
       <div className="error-container">
         <p>{error}</p>
         <div className="error-actions">
@@ -390,25 +467,18 @@ function AnalyticsPage() {
   }
 
   if (error && !isLoaded) {
-    return (<div className="error-container"><p>{error}</p><button className="btn btn-primary" onClick={() => loadData(true)}>重试</button></div>)
+    return renderPageShell(
+      <div className="error-container">
+        <p>{error}</p>
+        <button className="btn btn-primary" onClick={() => loadData(true)}>重试</button>
+      </div>
+    )
   }
 
 
   return (
-    <>
-      <div className="page-header">
-        <h1>私聊分析</h1>
-        <div className="header-actions">
-          <button className="btn btn-secondary" onClick={handleRefresh} disabled={isLoading}>
-            <RefreshCw size={16} className={isLoading ? 'spin' : ''} />
-            {isLoading ? '刷新中...' : '刷新'}
-          </button>
-          <button className="btn btn-secondary" onClick={openExcludeDialog}>
-            <UserMinus size={16} />
-            排除好友{excludedUsernames.size > 0 ? ` (${excludedUsernames.size})` : ''}
-          </button>
-        </div>
-      </div>
+    <div className="analytics-page-shell">
+      <ChatAnalysisHeader currentMode="private" actions={analyticsHeaderActions} />
       <div className="page-scroll">
         <section className="page-section">
           <div className="stats-overview">
@@ -556,7 +626,7 @@ function AnalyticsPage() {
           </div>
         </div>
       )}
-    </>
+    </div>
   )
 }
 

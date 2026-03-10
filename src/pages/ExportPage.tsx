@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type WheelEvent } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent, type UIEvent, type WheelEvent } from 'react'
 import { useLocation } from 'react-router-dom'
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
 import { createPortal } from 'react-dom'
@@ -30,6 +30,7 @@ import {
 } from 'lucide-react'
 import type { ChatSession as AppChatSession, ContactInfo } from '../types/models'
 import type { ExportOptions as ElectronExportOptions, ExportProgress } from '../types/electron'
+import type { BackgroundTaskRecord } from '../types/backgroundTask'
 import * as configService from '../services/config'
 import {
   emitExportSessionStatus,
@@ -37,6 +38,11 @@ import {
   onExportSessionStatusRequest,
   onOpenSingleExport
 } from '../services/exportBridge'
+import {
+  requestCancelBackgroundTask,
+  requestCancelBackgroundTasks,
+  subscribeBackgroundTasks
+} from '../services/backgroundTaskMonitor'
 import { useContactTypeCountsStore } from '../stores/contactTypeCountsStore'
 import { SnsPostItem } from '../components/Sns/SnsPostItem'
 import { ContactSnsTimelineDialog } from '../components/Sns/ContactSnsTimelineDialog'
@@ -174,6 +180,24 @@ const contentTypeLabels: Record<ContentType, string> = {
   image: '图片',
   video: '视频',
   emoji: '表情包'
+}
+
+const backgroundTaskSourceLabels: Record<string, string> = {
+  export: '导出页',
+  chat: '聊天页',
+  analytics: '分析页',
+  sns: '朋友圈页',
+  groupAnalytics: '群分析页',
+  annualReport: '年度报告',
+  other: '其他页面'
+}
+
+const backgroundTaskStatusLabels: Record<BackgroundTaskRecord['status'], string> = {
+  running: '运行中',
+  cancel_requested: '停止中',
+  completed: '已完成',
+  failed: '失败',
+  canceled: '已停止'
 }
 
 const conversationTabLabels: Record<ConversationTab, string> = {
@@ -1422,6 +1446,7 @@ function ExportPage() {
   const [sessionMutualFriendsMetrics, setSessionMutualFriendsMetrics] = useState<Record<string, SessionMutualFriendsMetric>>({})
   const [sessionMutualFriendsDialogTarget, setSessionMutualFriendsDialogTarget] = useState<SessionSnsTimelineTarget | null>(null)
   const [sessionMutualFriendsSearch, setSessionMutualFriendsSearch] = useState('')
+  const [backgroundTasks, setBackgroundTasks] = useState<BackgroundTaskRecord[]>([])
 
   const [exportFolder, setExportFolder] = useState('')
   const [writeLayout, setWriteLayout] = useState<configService.ExportWriteLayout>('B')
@@ -1487,6 +1512,12 @@ function ExportPage() {
   const [hasSeededSnsStats, setHasSeededSnsStats] = useState(false)
   const [nowTick, setNowTick] = useState(Date.now())
   const [isContactsListAtTop, setIsContactsListAtTop] = useState(true)
+  const [isContactsHeaderDragging, setIsContactsHeaderDragging] = useState(false)
+  const [contactsListScrollParent, setContactsListScrollParent] = useState<HTMLDivElement | null>(null)
+  const [contactsHorizontalScrollMetrics, setContactsHorizontalScrollMetrics] = useState({
+    viewportWidth: 0,
+    contentWidth: 0
+  })
   const tabCounts = useContactTypeCountsStore(state => state.tabCounts)
   const isSharedTabCountsLoading = useContactTypeCountsStore(state => state.isLoading)
   const isSharedTabCountsReady = useContactTypeCountsStore(state => state.isReady)
@@ -1508,6 +1539,16 @@ function ExportPage() {
   const contactsAvatarCacheRef = useRef<Record<string, configService.ContactsAvatarCacheEntry>>({})
   const contactsVirtuosoRef = useRef<VirtuosoHandle | null>(null)
   const sessionTableSectionRef = useRef<HTMLDivElement | null>(null)
+  const contactsHorizontalViewportRef = useRef<HTMLDivElement | null>(null)
+  const contactsHorizontalContentRef = useRef<HTMLDivElement | null>(null)
+  const contactsBottomScrollbarRef = useRef<HTMLDivElement | null>(null)
+  const contactsScrollSyncSourceRef = useRef<'viewport' | 'bottom' | null>(null)
+  const contactsHeaderDragStateRef = useRef({
+    pointerId: -1,
+    startClientX: 0,
+    startScrollLeft: 0,
+    didDrag: false
+  })
   const sessionFormatDropdownRef = useRef<HTMLDivElement | null>(null)
   const detailRequestSeqRef = useRef(0)
   const sessionsRef = useRef<SessionRow[]>([])
@@ -1559,6 +1600,10 @@ function ExportPage() {
     startIndex: 0,
     endIndex: -1
   })
+
+  const handleContactsListScrollParentRef = useCallback((node: HTMLDivElement | null) => {
+    setContactsListScrollParent(prev => (prev === node ? prev : node))
+  }, [])
 
   const ensureExportCacheScope = useCallback(async (): Promise<string> => {
     if (exportCacheScopeReadyRef.current) {
@@ -1902,6 +1947,10 @@ function ExportPage() {
     }, 500)
     return () => window.clearInterval(timer)
   }, [contactsList.length, isContactsListLoading, contactsLoadIssue])
+
+  useEffect(() => {
+    return subscribeBackgroundTasks(setBackgroundTasks)
+  }, [])
 
   useEffect(() => {
     tasksRef.current = tasks
@@ -3843,11 +3892,9 @@ function ExportPage() {
 
     if (scope === 'content' && contentType) {
       if (contentType === 'text') {
-        const fastTextFormat: TextExportFormat = options.format === 'excel' ? 'arkme-json' : options.format
         const textExportConcurrency = Math.min(2, Math.max(1, base.exportConcurrency ?? options.exportConcurrency))
         return {
           ...base,
-          format: fastTextFormat,
           contentType,
           exportConcurrency: textExportConcurrency,
           exportAvatars: base.exportAvatars,
@@ -5491,6 +5538,16 @@ function ExportPage() {
       alert('复制失败，请手动复制诊断信息')
     }
   }, [contactsDiagnosticsText])
+  const handleCancelBackgroundTask = useCallback((taskId: string) => {
+    requestCancelBackgroundTask(taskId)
+  }, [])
+  const handleCancelAllNonExportTasks = useCallback(() => {
+    requestCancelBackgroundTasks(task => (
+      task.sourcePage !== 'export' &&
+      task.cancelable &&
+      (task.status === 'running' || task.status === 'cancel_requested')
+    ))
+  }, [])
 
   const sessionContactsUpdatedAtLabel = useMemo(() => {
     if (!sessionContactsUpdatedAt) return ''
@@ -5563,6 +5620,36 @@ function ExportPage() {
   const taskQueuedCount = tasks.filter(task => task.status === 'queued').length
   const taskCenterAlertCount = taskRunningCount + taskQueuedCount
   const hasFilteredContacts = filteredContacts.length > 0
+  const contactsTableMinWidth = useMemo(() => {
+    const baseWidth = 24 + 34 + 44 + 280 + 120 + (4 * 72) + 140 + (8 * 12)
+    const snsWidth = shouldShowSnsColumn ? 72 + 12 : 0
+    const mutualFriendsWidth = shouldShowMutualFriendsColumn ? 72 + 12 : 0
+    return baseWidth + snsWidth + mutualFriendsWidth
+  }, [shouldShowMutualFriendsColumn, shouldShowSnsColumn])
+  const contactsTableStyle = useMemo(() => (
+    {
+      ['--contacts-table-min-width' as const]: `${contactsTableMinWidth}px`
+    } as CSSProperties
+  ), [contactsTableMinWidth])
+  const hasContactsHorizontalOverflow = contactsHorizontalScrollMetrics.contentWidth - contactsHorizontalScrollMetrics.viewportWidth > 1
+  const contactsBottomScrollbarInnerStyle = useMemo<CSSProperties>(() => ({
+    width: `${Math.max(contactsHorizontalScrollMetrics.contentWidth, contactsHorizontalScrollMetrics.viewportWidth)}px`
+  }), [contactsHorizontalScrollMetrics.contentWidth, contactsHorizontalScrollMetrics.viewportWidth])
+  const nonExportBackgroundTasks = useMemo(() => (
+    backgroundTasks.filter(task => task.sourcePage !== 'export')
+  ), [backgroundTasks])
+  const runningNonExportTaskCount = useMemo(() => (
+    nonExportBackgroundTasks.filter(task => task.status === 'running' || task.status === 'cancel_requested').length
+  ), [nonExportBackgroundTasks])
+  const cancelableNonExportTaskCount = useMemo(() => (
+    nonExportBackgroundTasks.filter(task => (
+      task.cancelable &&
+      (task.status === 'running' || task.status === 'cancel_requested')
+    )).length
+  ), [nonExportBackgroundTasks])
+  const nonExportBackgroundTasksUpdatedAt = useMemo(() => (
+    nonExportBackgroundTasks.reduce((latest, task) => Math.max(latest, task.updatedAt || 0), 0)
+  ), [nonExportBackgroundTasks])
   const sessionLoadDetailUpdatedAt = useMemo(() => {
     let latest = 0
     for (const row of sessionLoadDetailRows) {
@@ -5588,6 +5675,136 @@ function ExportPage() {
       row.mutualFriends.statusLabel.startsWith('加载中')
     ))
   ), [sessionLoadDetailRows])
+  const syncContactsHorizontalScroll = useCallback((source: 'viewport' | 'bottom', scrollLeft: number) => {
+    if (contactsScrollSyncSourceRef.current && contactsScrollSyncSourceRef.current !== source) return
+
+    contactsScrollSyncSourceRef.current = source
+    const viewport = contactsHorizontalViewportRef.current
+    const bottomScrollbar = contactsBottomScrollbarRef.current
+
+    if (source !== 'viewport' && viewport && Math.abs(viewport.scrollLeft - scrollLeft) > 1) {
+      viewport.scrollLeft = scrollLeft
+    }
+
+    if (source !== 'bottom' && bottomScrollbar && Math.abs(bottomScrollbar.scrollLeft - scrollLeft) > 1) {
+      bottomScrollbar.scrollLeft = scrollLeft
+    }
+
+    window.requestAnimationFrame(() => {
+      if (contactsScrollSyncSourceRef.current === source) {
+        contactsScrollSyncSourceRef.current = null
+      }
+    })
+  }, [])
+  const handleContactsHorizontalViewportScroll = useCallback((event: UIEvent<HTMLDivElement>) => {
+    syncContactsHorizontalScroll('viewport', event.currentTarget.scrollLeft)
+  }, [syncContactsHorizontalScroll])
+  const handleContactsBottomScrollbarScroll = useCallback((event: UIEvent<HTMLDivElement>) => {
+    syncContactsHorizontalScroll('bottom', event.currentTarget.scrollLeft)
+  }, [syncContactsHorizontalScroll])
+  const resetContactsHeaderDrag = useCallback((currentTarget?: HTMLDivElement | null) => {
+    const dragState = contactsHeaderDragStateRef.current
+    if (currentTarget && dragState.pointerId >= 0 && currentTarget.hasPointerCapture(dragState.pointerId)) {
+      currentTarget.releasePointerCapture(dragState.pointerId)
+    }
+    dragState.pointerId = -1
+    dragState.startClientX = 0
+    dragState.startScrollLeft = 0
+    dragState.didDrag = false
+    setIsContactsHeaderDragging(false)
+  }, [])
+  const handleContactsHeaderPointerDown = useCallback((event: PointerEvent<HTMLDivElement>) => {
+    if (!hasContactsHorizontalOverflow || event.pointerType === 'touch') return
+    if (event.button !== 0) return
+    if (event.target instanceof Element && event.target.closest('button, a, input, textarea, select, label, [role="button"]')) {
+      return
+    }
+
+    contactsHeaderDragStateRef.current = {
+      pointerId: event.pointerId,
+      startClientX: event.clientX,
+      startScrollLeft: contactsHorizontalViewportRef.current?.scrollLeft ?? 0,
+      didDrag: false
+    }
+    event.currentTarget.setPointerCapture(event.pointerId)
+    setIsContactsHeaderDragging(true)
+  }, [hasContactsHorizontalOverflow])
+  const handleContactsHeaderPointerMove = useCallback((event: PointerEvent<HTMLDivElement>) => {
+    const dragState = contactsHeaderDragStateRef.current
+    if (dragState.pointerId !== event.pointerId) return
+
+    const viewport = contactsHorizontalViewportRef.current
+    const content = contactsHorizontalContentRef.current
+    if (!viewport || !content) return
+
+    const deltaX = event.clientX - dragState.startClientX
+    if (!dragState.didDrag && Math.abs(deltaX) < 4) return
+
+    dragState.didDrag = true
+    const maxScrollLeft = Math.max(0, content.scrollWidth - viewport.clientWidth)
+    const nextScrollLeft = Math.max(0, Math.min(dragState.startScrollLeft - deltaX, maxScrollLeft))
+
+    viewport.scrollLeft = nextScrollLeft
+    syncContactsHorizontalScroll('viewport', nextScrollLeft)
+    event.preventDefault()
+  }, [syncContactsHorizontalScroll])
+  const handleContactsHeaderPointerUp = useCallback((event: PointerEvent<HTMLDivElement>) => {
+    if (contactsHeaderDragStateRef.current.pointerId !== event.pointerId) return
+    resetContactsHeaderDrag(event.currentTarget)
+  }, [resetContactsHeaderDrag])
+  const handleContactsHeaderPointerCancel = useCallback((event: PointerEvent<HTMLDivElement>) => {
+    if (contactsHeaderDragStateRef.current.pointerId !== event.pointerId) return
+    resetContactsHeaderDrag(event.currentTarget)
+  }, [resetContactsHeaderDrag])
+  useEffect(() => {
+    const viewport = contactsHorizontalViewportRef.current
+    const content = contactsHorizontalContentRef.current
+    if (!viewport || !content) return
+
+    const syncMetrics = () => {
+      const viewportWidth = Math.round(viewport.clientWidth)
+      const contentWidth = Math.round(content.scrollWidth)
+
+      setContactsHorizontalScrollMetrics((prev) => (
+        prev.viewportWidth === viewportWidth && prev.contentWidth === contentWidth
+          ? prev
+          : { viewportWidth, contentWidth }
+      ))
+
+      const maxScrollLeft = Math.max(0, contentWidth - viewportWidth)
+      const clampedScrollLeft = Math.min(viewport.scrollLeft, maxScrollLeft)
+
+      if (Math.abs(viewport.scrollLeft - clampedScrollLeft) > 1) {
+        viewport.scrollLeft = clampedScrollLeft
+      }
+
+      const bottomScrollbar = contactsBottomScrollbarRef.current
+      if (bottomScrollbar) {
+        const nextScrollLeft = Math.min(bottomScrollbar.scrollLeft, maxScrollLeft)
+        if (Math.abs(bottomScrollbar.scrollLeft - nextScrollLeft) > 1) {
+          bottomScrollbar.scrollLeft = nextScrollLeft
+        }
+        if (Math.abs(nextScrollLeft - clampedScrollLeft) > 1) {
+          bottomScrollbar.scrollLeft = clampedScrollLeft
+        }
+      }
+    }
+
+    syncMetrics()
+
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', syncMetrics)
+      return () => window.removeEventListener('resize', syncMetrics)
+    }
+
+    const resizeObserver = new ResizeObserver(syncMetrics)
+    resizeObserver.observe(viewport)
+    resizeObserver.observe(content)
+
+    return () => {
+      resizeObserver.disconnect()
+    }
+  }, [])
   const closeTaskCenter = useCallback(() => {
     setIsTaskCenterOpen(false)
     setExpandedPerfTaskId(null)
@@ -5664,27 +5881,29 @@ function ExportPage() {
     return (
       <div className={`contact-row ${checked ? 'selected' : ''}`}>
         <div className="contact-item">
-          <div className="row-select-cell">
-            <button
-              className={`select-icon-btn ${checked ? 'checked' : ''}`}
-              type="button"
-              disabled={!canExport}
-              onClick={() => toggleSelectSession(contact.username)}
-              title={canExport ? (checked ? '取消选择' : '选择会话') : '该联系人暂无会话记录'}
-            >
-              {checked ? <CheckSquare size={16} /> : <Square size={16} />}
-            </button>
-          </div>
-          <div className="contact-avatar">
-            {contact.avatarUrl ? (
-              <img src={contact.avatarUrl} alt="" loading="lazy" />
-            ) : (
-              <span>{getAvatarLetter(contact.displayName)}</span>
-            )}
-          </div>
-          <div className="contact-info">
-            <div className="contact-name">{contact.displayName}</div>
-            <div className="contact-remark">{contact.alias || contact.username}</div>
+          <div className="row-left-sticky">
+            <div className="row-select-cell">
+              <button
+                className={`select-icon-btn ${checked ? 'checked' : ''}`}
+                type="button"
+                disabled={!canExport}
+                onClick={() => toggleSelectSession(contact.username)}
+                title={canExport ? (checked ? '取消选择' : '选择会话') : '该联系人暂无会话记录'}
+              >
+                {checked ? <CheckSquare size={16} /> : <Square size={16} />}
+              </button>
+            </div>
+            <div className="contact-avatar">
+              {contact.avatarUrl ? (
+                <img src={contact.avatarUrl} alt="" loading="lazy" />
+              ) : (
+                <span>{getAvatarLetter(contact.displayName)}</span>
+              )}
+            </div>
+            <div className="contact-info">
+              <div className="contact-name">{contact.displayName}</div>
+              <div className="contact-remark">{contact.alias || contact.username}</div>
+            </div>
           </div>
           <div className="row-message-count">
             <div className="row-message-stats">
@@ -5796,7 +6015,7 @@ function ExportPage() {
                     })
                   }}
                 >
-                  {!canExport ? '暂无会话' : isRunning ? '导出中...' : isQueued ? '排队中' : '单会话导出'}
+                  {!canExport ? '暂无会话' : isRunning ? '导出中...' : isQueued ? '排队中' : '导出'}
                 </button>
                 {hasRecentExport && <span className="row-export-time">{recentExportTime}</span>}
               </div>
@@ -6115,157 +6334,198 @@ function ExportPage() {
       </div>
       <div className="session-table-section" ref={sessionTableSectionRef}>
         <div className="session-table-layout">
-          <div className="table-wrap">
-            <div className="session-table-sticky">
-              <div className="table-toolbar">
-                <div className="table-tabs" role="tablist" aria-label="会话类型">
-                  <button className={`tab-btn ${activeTab === 'private' ? 'active' : ''}`} onClick={() => setActiveTab('private')}>
-                    私聊 {isTabCountComputing ? <span className="count-loading">计算中<span className="animated-ellipsis" aria-hidden="true">...</span></span> : tabCounts.private}
-                  </button>
-                  <button className={`tab-btn ${activeTab === 'group' ? 'active' : ''}`} onClick={() => setActiveTab('group')}>
-                    群聊 {isTabCountComputing ? <span className="count-loading">计算中<span className="animated-ellipsis" aria-hidden="true">...</span></span> : tabCounts.group}
-                  </button>
-                  <button className={`tab-btn ${activeTab === 'former_friend' ? 'active' : ''}`} onClick={() => setActiveTab('former_friend')}>
-                    曾经的好友 {isTabCountComputing ? <span className="count-loading">计算中<span className="animated-ellipsis" aria-hidden="true">...</span></span> : tabCounts.former_friend}
-                  </button>
-                </div>
-
-                <div className="toolbar-actions">
-                  <div className="search-input-wrap">
-                    <Search size={14} />
-                    <input
-                      value={searchKeyword}
-                      onChange={(event) => setSearchKeyword(event.target.value)}
-                      placeholder={`搜索${activeTabLabel}联系人...`}
-                    />
-                    {searchKeyword && (
-                      <button className="clear-search" onClick={() => setSearchKeyword('')}>
-                        <X size={12} />
-                      </button>
-                    )}
-                  </div>
-                  <button className="secondary-btn" onClick={() => void loadContactsList()} disabled={isContactsListLoading}>
-                    <RefreshCw size={14} className={isContactsListLoading ? 'spin' : ''} />
-                    刷新
-                  </button>
-                </div>
+          <div className="table-wrap" style={contactsTableStyle}>
+            <div className="table-toolbar">
+              <div className="table-tabs" role="tablist" aria-label="会话类型">
+                <button className={`tab-btn ${activeTab === 'private' ? 'active' : ''}`} onClick={() => setActiveTab('private')}>
+                  <span className="tab-btn-content">
+                    <span>私聊</span>
+                    <span>{isTabCountComputing ? <span className="count-loading">计算中<span className="animated-ellipsis" aria-hidden="true">...</span></span> : tabCounts.private}</span>
+                  </span>
+                </button>
+                <button className={`tab-btn ${activeTab === 'group' ? 'active' : ''}`} onClick={() => setActiveTab('group')}>
+                  <span className="tab-btn-content">
+                    <span>群聊</span>
+                    <span>{isTabCountComputing ? <span className="count-loading">计算中<span className="animated-ellipsis" aria-hidden="true">...</span></span> : tabCounts.group}</span>
+                  </span>
+                </button>
+                <button className={`tab-btn ${activeTab === 'former_friend' ? 'active' : ''}`} onClick={() => setActiveTab('former_friend')}>
+                  <span className="tab-btn-content">
+                    <span>曾经的好友</span>
+                    <span>{isTabCountComputing ? <span className="count-loading">计算中<span className="animated-ellipsis" aria-hidden="true">...</span></span> : tabCounts.former_friend}</span>
+                  </span>
+                </button>
               </div>
 
-              {contactsList.length > 0 && isContactsListLoading && (
-                <div className="table-stage-hint">
-                  <Loader2 size={14} className="spin" />
-                  联系人列表同步中…
-                </div>
-              )}
-
-              {hasFilteredContacts && (
-                <div className="contacts-list-header">
-                  <span className="contacts-list-header-select">
-                    <button
-                      className={`select-icon-btn ${isAllVisibleSelected ? 'checked' : ''}`}
-                      type="button"
-                      onClick={toggleSelectAllVisible}
-                      disabled={visibleSelectableCount === 0}
-                      title={isAllVisibleSelected ? '取消全选当前筛选联系人' : '全选当前筛选联系人'}
-                    >
-                      {isAllVisibleSelected ? <CheckSquare size={16} /> : <Square size={16} />}
+              <div className="toolbar-actions">
+                <div className="search-input-wrap">
+                  <Search size={14} />
+                  <input
+                    value={searchKeyword}
+                    onChange={(event) => setSearchKeyword(event.target.value)}
+                    placeholder={`搜索${activeTabLabel}联系人...`}
+                  />
+                  {searchKeyword && (
+                    <button className="clear-search" onClick={() => setSearchKeyword('')}>
+                      <X size={12} />
                     </button>
-                  </span>
-                  <span className="contacts-list-header-main">
-                    <span className="contacts-list-header-main-label">{contactsHeaderMainLabel}</span>
-                  </span>
-                  <span className="contacts-list-header-count">总消息数</span>
-                  <span className="contacts-list-header-media">表情包</span>
-                  <span className="contacts-list-header-media">语音</span>
-                  <span className="contacts-list-header-media">图片</span>
-                  <span className="contacts-list-header-media">视频</span>
-                  {shouldShowSnsColumn && (
-                    <span className="contacts-list-header-media">朋友圈</span>
                   )}
-                  {shouldShowMutualFriendsColumn && (
-                    <span className="contacts-list-header-media">共同好友</span>
-                  )}
-                  <span className="contacts-list-header-actions">
-                    {selectedCount > 0 && (
-                      <>
-                        <button
-                          className="selection-clear-btn"
-                          type="button"
-                          onClick={clearSelection}
-                        >
-                          清空
-                        </button>
-                        <button
-                          className="selection-export-btn"
-                          type="button"
-                          onClick={openBatchExport}
-                        >
-                          <span>批量导出</span>
-                          <span className="selection-export-count">{selectedCount}</span>
-                        </button>
-                      </>
-                    )}
-                  </span>
                 </div>
-              )}
+                <button className="secondary-btn" onClick={() => void loadContactsList()} disabled={isContactsListLoading}>
+                  <RefreshCw size={14} className={isContactsListLoading ? 'spin' : ''} />
+                  刷新
+                </button>
+              </div>
             </div>
 
-            {contactsList.length === 0 && contactsLoadIssue ? (
-              <div className="load-issue-state">
-                <div className="issue-card">
-                  <div className="issue-title">
-                    <AlertTriangle size={18} />
-                    <span>{contactsLoadIssue.title}</span>
+            <div className="table-scroll-shell">
+              <div
+                ref={contactsHorizontalViewportRef}
+                className="table-scroll-viewport"
+                onScroll={handleContactsHorizontalViewportScroll}
+              >
+                <div ref={contactsHorizontalContentRef} className="table-scroll-content">
+                  <div className="session-table-sticky">
+                    {contactsList.length > 0 && isContactsListLoading && (
+                      <div className="table-stage-hint">
+                        <Loader2 size={14} className="spin" />
+                        联系人列表同步中…
+                      </div>
+                    )}
+
+                    {hasFilteredContacts && (
+                      <div
+                        className={`contacts-list-header ${hasContactsHorizontalOverflow ? 'is-draggable' : ''} ${isContactsHeaderDragging ? 'is-dragging' : ''}`}
+                        onPointerDown={handleContactsHeaderPointerDown}
+                        onPointerMove={handleContactsHeaderPointerMove}
+                        onPointerUp={handleContactsHeaderPointerUp}
+                        onPointerCancel={handleContactsHeaderPointerCancel}
+                      >
+                        <span className="contacts-list-header-left">
+                          <span className="contacts-list-header-select">
+                            <button
+                              className={`select-icon-btn ${isAllVisibleSelected ? 'checked' : ''}`}
+                              type="button"
+                              onClick={toggleSelectAllVisible}
+                              disabled={visibleSelectableCount === 0}
+                              title={isAllVisibleSelected ? '取消全选当前筛选联系人' : '全选当前筛选联系人'}
+                            >
+                              {isAllVisibleSelected ? <CheckSquare size={16} /> : <Square size={16} />}
+                            </button>
+                          </span>
+                          <span className="contacts-list-header-main">
+                            <span className="contacts-list-header-main-label">{contactsHeaderMainLabel}</span>
+                          </span>
+                        </span>
+                        <span className="contacts-list-header-count">总消息数</span>
+                        <span className="contacts-list-header-media">表情包</span>
+                        <span className="contacts-list-header-media">语音</span>
+                        <span className="contacts-list-header-media">图片</span>
+                        <span className="contacts-list-header-media">视频</span>
+                        {shouldShowSnsColumn && (
+                          <span className="contacts-list-header-media">朋友圈</span>
+                        )}
+                        {shouldShowMutualFriendsColumn && (
+                          <span className="contacts-list-header-media">共同好友</span>
+                        )}
+                        <span className="contacts-list-header-actions">
+                          {selectedCount > 0 && (
+                            <>
+                              <button
+                                className="selection-clear-btn"
+                                type="button"
+                                onClick={clearSelection}
+                              >
+                                清空
+                              </button>
+                              <button
+                                className="selection-export-btn"
+                                type="button"
+                                onClick={openBatchExport}
+                              >
+                                <span>批量导出</span>
+                                <span className="selection-export-count">{selectedCount}</span>
+                              </button>
+                            </>
+                          )}
+                        </span>
+                      </div>
+                    )}
                   </div>
-                  <p className="issue-message">{contactsLoadIssue.message}</p>
-                  <p className="issue-reason">{contactsLoadIssue.reason}</p>
-                  <ul className="issue-hints">
-                    <li>可能原因1：数据库当前仍在执行高开销查询（例如导出页后台统计）。</li>
-                    <li>可能原因2：contact.db 数据量较大，首次查询时间过长。</li>
-                    <li>可能原因3：数据库连接状态异常或 IPC 调用卡住。</li>
-                  </ul>
-                  <div className="issue-actions">
-                    <button className="issue-btn primary" onClick={() => void loadContactsList()}>
-                      <RefreshCw size={14} />
-                      <span>重试加载</span>
-                    </button>
-                    <button className="issue-btn" onClick={() => setShowContactsDiagnostics(prev => !prev)}>
-                      <ClipboardList size={14} />
-                      <span>{showContactsDiagnostics ? '收起诊断详情' : '查看诊断详情'}</span>
-                    </button>
-                    <button className="issue-btn" onClick={copyContactsDiagnostics}>
-                      <span>复制诊断信息</span>
-                    </button>
-                  </div>
-                  {showContactsDiagnostics && (
-                    <pre className="issue-diagnostics">{contactsDiagnosticsText}</pre>
+
+                  {contactsList.length === 0 && contactsLoadIssue ? (
+                    <div className="load-issue-state">
+                      <div className="issue-card">
+                        <div className="issue-title">
+                          <AlertTriangle size={18} />
+                          <span>{contactsLoadIssue.title}</span>
+                        </div>
+                        <p className="issue-message">{contactsLoadIssue.message}</p>
+                        <p className="issue-reason">{contactsLoadIssue.reason}</p>
+                        <ul className="issue-hints">
+                          <li>可能原因1：数据库当前仍在执行高开销查询（例如导出页后台统计）。</li>
+                          <li>可能原因2：contact.db 数据量较大，首次查询时间过长。</li>
+                          <li>可能原因3：数据库连接状态异常或 IPC 调用卡住。</li>
+                        </ul>
+                        <div className="issue-actions">
+                          <button className="issue-btn primary" onClick={() => void loadContactsList()}>
+                            <RefreshCw size={14} />
+                            <span>重试加载</span>
+                          </button>
+                          <button className="issue-btn" onClick={() => setShowContactsDiagnostics(prev => !prev)}>
+                            <ClipboardList size={14} />
+                            <span>{showContactsDiagnostics ? '收起诊断详情' : '查看诊断详情'}</span>
+                          </button>
+                          <button className="issue-btn" onClick={copyContactsDiagnostics}>
+                            <span>复制诊断信息</span>
+                          </button>
+                        </div>
+                        {showContactsDiagnostics && (
+                          <pre className="issue-diagnostics">{contactsDiagnosticsText}</pre>
+                        )}
+                      </div>
+                    </div>
+                  ) : isContactsListLoading && contactsList.length === 0 ? (
+                    <div className="loading-state">
+                      <Loader2 size={32} className="spin" />
+                      <span>联系人加载中...</span>
+                    </div>
+                  ) : !hasFilteredContacts ? (
+                    <div className="empty-state">
+                      <span>暂无联系人</span>
+                    </div>
+                  ) : (
+                    <div
+                      className="contacts-list"
+                      ref={handleContactsListScrollParentRef}
+                      onWheelCapture={handleContactsListWheelCapture}
+                    >
+                      <Virtuoso
+                        ref={contactsVirtuosoRef}
+                        className="contacts-virtuoso"
+                        customScrollParent={contactsListScrollParent ?? undefined}
+                        data={filteredContacts}
+                        computeItemKey={(_, contact) => contact.username}
+                        fixedItemHeight={76}
+                        itemContent={renderContactRow}
+                        rangeChanged={handleContactsRangeChanged}
+                        atTopStateChange={setIsContactsListAtTop}
+                        overscan={420}
+                      />
+                    </div>
                   )}
                 </div>
               </div>
-            ) : isContactsListLoading && contactsList.length === 0 ? (
-              <div className="loading-state">
-                <Loader2 size={32} className="spin" />
-                <span>联系人加载中...</span>
-              </div>
-            ) : !hasFilteredContacts ? (
-              <div className="empty-state">
-                <span>暂无联系人</span>
-              </div>
-            ) : (
+            </div>
+
+            {hasFilteredContacts && hasContactsHorizontalOverflow && (
               <div
-                className="contacts-list"
-                onWheelCapture={handleContactsListWheelCapture}
+                ref={contactsBottomScrollbarRef}
+                className="table-bottom-scrollbar"
+                onScroll={handleContactsBottomScrollbarScroll}
+                aria-label="会话列表横向滚动条"
               >
-                <Virtuoso
-                  ref={contactsVirtuosoRef}
-                  className="contacts-virtuoso"
-                  data={filteredContacts}
-                  computeItemKey={(_, contact) => contact.username}
-                  itemContent={renderContactRow}
-                  rangeChanged={handleContactsRangeChanged}
-                  atTopStateChange={setIsContactsListAtTop}
-                  overscan={420}
-                />
+                <div className="table-bottom-scrollbar-inner" style={contactsBottomScrollbarInnerStyle} />
               </div>
             )}
           </div>
@@ -6303,6 +6563,67 @@ function ExportPage() {
                 </div>
 
                 <div className="session-load-detail-body">
+                  <section className="session-load-detail-block">
+                    <h5>其他页面后台任务</h5>
+                    <div className="session-load-detail-summary">
+                      <div className="session-load-detail-summary-text">
+                        <strong>{runningNonExportTaskCount}</strong>
+                        <span>个任务正在占用后台读取资源</span>
+                        {nonExportBackgroundTasksUpdatedAt > 0 && (
+                          <em>最近更新时间 {new Date(nonExportBackgroundTasksUpdatedAt).toLocaleTimeString('zh-CN', { hour12: false })}</em>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        className="session-load-detail-stop-btn"
+                        onClick={handleCancelAllNonExportTasks}
+                        disabled={cancelableNonExportTaskCount === 0}
+                      >
+                        中断其他页面加载
+                      </button>
+                    </div>
+                    <p className="session-load-detail-note">
+                      停止请求会阻止其他页面继续发起后续统计或补算；当前已经发出的单次查询，会在返回后结束。
+                    </p>
+                    {nonExportBackgroundTasks.length > 0 ? (
+                      <div className="session-load-detail-task-list">
+                        {nonExportBackgroundTasks.map((task) => (
+                          <div key={task.id} className={`session-load-detail-task-item status-${task.status}`}>
+                            <div className="session-load-detail-task-main">
+                              <div className="session-load-detail-task-title-row">
+                                <span className="session-load-detail-task-source">
+                                  {backgroundTaskSourceLabels[task.sourcePage] || backgroundTaskSourceLabels.other}
+                                </span>
+                                <strong>{task.title}</strong>
+                                <span className={`session-load-detail-task-status status-${task.status}`}>
+                                  {backgroundTaskStatusLabels[task.status]}
+                                </span>
+                              </div>
+                              <p>{task.detail || '暂无详细说明'}</p>
+                              <div className="session-load-detail-task-meta">
+                                <span>开始：{formatLoadDetailTime(task.startedAt)}</span>
+                                <span>更新：{formatLoadDetailTime(task.updatedAt)}</span>
+                                {task.progressText && <span>进度：{task.progressText}</span>}
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              className="session-load-detail-task-stop-btn"
+                              onClick={() => handleCancelBackgroundTask(task.id)}
+                              disabled={!task.cancelable || (task.status !== 'running' && task.status !== 'cancel_requested')}
+                            >
+                              停止
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="session-load-detail-empty">
+                        当前没有检测到其他页面后台任务
+                      </div>
+                    )}
+                  </section>
+
                   <section className="session-load-detail-block">
                     <h5>总消息数</h5>
                     <div className="session-load-detail-table">

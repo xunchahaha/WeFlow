@@ -1,6 +1,12 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Calendar, Loader2, Sparkles, Users } from 'lucide-react'
+import {
+  finishBackgroundTask,
+  isBackgroundTaskCancelRequested,
+  registerBackgroundTask,
+  updateBackgroundTask
+} from '../services/backgroundTaskMonitor'
 import './AnnualReportPage.scss'
 
 type YearOption = number | 'all'
@@ -49,8 +55,17 @@ function AnnualReportPage() {
   useEffect(() => {
     let disposed = false
     let taskId = ''
+    let uiTaskId = ''
 
     const applyLoadPayload = (payload: YearsLoadPayload) => {
+      if (uiTaskId) {
+        updateBackgroundTask(uiTaskId, {
+          detail: payload.statusText || '正在加载可用年份',
+          progressText: payload.done
+            ? '已完成'
+            : `${Array.isArray(payload.years) ? payload.years.length : 0} 个年份`
+        })
+      }
       if (payload.strategy) setLoadStrategy(payload.strategy)
       if (payload.phase) setLoadPhase(payload.phase)
       if (typeof payload.statusText === 'string' && payload.statusText) setLoadStatusText(payload.statusText)
@@ -91,6 +106,14 @@ function AnnualReportPage() {
         setIsLoadingMoreYears(false)
         setHasYearsLoadFinished(true)
         setLoadPhase('done')
+        if (uiTaskId) {
+          finishBackgroundTask(uiTaskId, payload.canceled ? 'canceled' : 'completed', {
+            detail: payload.canceled
+              ? '年度报告年份加载已停止'
+              : `年度报告年份加载完成，共 ${years.length} 个年份`,
+            progressText: payload.canceled ? '已停止' : `${years.length} 个年份`
+          })
+        }
       } else {
         setIsLoadingMoreYears(true)
         setHasYearsLoadFinished(false)
@@ -105,6 +128,18 @@ function AnnualReportPage() {
     })
 
     const startLoad = async () => {
+      uiTaskId = registerBackgroundTask({
+        sourcePage: 'annualReport',
+        title: '年度报告年份加载',
+        detail: '准备使用原生快速模式加载年份',
+        progressText: '初始化',
+        cancelable: true,
+        onCancel: async () => {
+          if (taskId) {
+            await window.electronAPI.annualReport.cancelAvailableYearsLoad(taskId)
+          }
+        }
+      })
       setIsLoading(true)
       setIsLoadingMoreYears(true)
       setHasYearsLoadFinished(false)
@@ -120,6 +155,9 @@ function AnnualReportPage() {
       try {
         const startResult = await window.electronAPI.annualReport.startAvailableYearsLoad()
         if (!startResult.success || !startResult.taskId) {
+          finishBackgroundTask(uiTaskId, 'failed', {
+            detail: startResult.error || '加载年度数据失败'
+          })
           setLoadError(startResult.error || '加载年度数据失败')
           setIsLoading(false)
           setIsLoadingMoreYears(false)
@@ -131,6 +169,9 @@ function AnnualReportPage() {
         }
       } catch (e) {
         console.error(e)
+        finishBackgroundTask(uiTaskId, 'failed', {
+          detail: String(e)
+        })
         setLoadError(String(e))
         setIsLoading(false)
         setIsLoadingMoreYears(false)
