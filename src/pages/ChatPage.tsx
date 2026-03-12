@@ -3854,12 +3854,6 @@ function ChatPage(props: ChatPageProps) {
               <button className="icon-btn refresh-btn" onClick={handleRefresh} disabled={isLoadingSessions || isRefreshingSessions}>
                 <RefreshCw size={16} className={(isLoadingSessions || isRefreshingSessions) ? 'spin' : ''} />
               </button>
-              {isSessionListSyncing && (
-                <div className="session-sync-indicator">
-                  <Loader2 size={12} className="spin" />
-                  <span>同步中</span>
-                </div>
-              )}
             </div>
           </div>
           {/* 折叠群 header */}

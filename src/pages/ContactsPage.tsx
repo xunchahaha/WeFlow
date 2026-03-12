@@ -891,28 +891,6 @@ function ContactsPage() {
                     </label>
                 </div>
 
-                <div className="contacts-count">
-                    共 {filteredContacts.length} / {contacts.length} 个联系人
-                    {contactsUpdatedAt && (
-                        <span className="contacts-cache-meta">
-                            {contactsDataSource === 'cache' ? '缓存' : '最新'} · 更新于 {contactsUpdatedAtLabel}
-                        </span>
-                    )}
-                    {contacts.length > 0 && (
-                        <span className="contacts-cache-meta">
-                            头像缓存 {avatarCachedCount}/{contacts.length}
-                            {avatarCacheUpdatedAtLabel ? ` · 更新于 ${avatarCacheUpdatedAtLabel}` : ''}
-                        </span>
-                    )}
-                    {isLoading && contacts.length > 0 && (
-                        <span className="contacts-cache-meta syncing">后台同步中...</span>
-                    )}
-                    {avatarEnrichProgress.running && (
-                        <span className="avatar-enrich-progress">
-                            头像补全中 {avatarEnrichProgress.loaded}/{avatarEnrichProgress.total}
-                        </span>
-                    )}
-                </div>
 
                 {exportMode && (
                     <div className="selection-toolbar">

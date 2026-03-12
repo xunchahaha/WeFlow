@@ -1,7 +1,9 @@
 import { useState, useEffect, useRef } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
-import { Home, MessageSquare, BarChart3, FileText, Settings, Download, Aperture, UserCircle, Lock, LockOpen, ChevronUp, Trash2 } from 'lucide-react'
+import { Home, MessageSquare, BarChart3, FileText, Settings, Download, Aperture, UserCircle, Lock, LockOpen, ChevronUp, RefreshCw } from 'lucide-react'
 import { useAppStore } from '../stores/appStore'
+import { useChatStore } from '../stores/chatStore'
+import { useAnalyticsStore } from '../stores/analyticsStore'
 import * as configService from '../services/config'
 import { onExportSessionStatus, requestExportSessionStatus } from '../services/exportBridge'
 
@@ -15,9 +17,26 @@ interface SidebarUserProfile {
 }
 
 const SIDEBAR_USER_PROFILE_CACHE_KEY = 'sidebar_user_profile_cache_v1'
+const ACCOUNT_PROFILES_CACHE_KEY = 'account_profiles_cache_v1'
 
 interface SidebarUserProfileCache extends SidebarUserProfile {
   updatedAt: number
+}
+
+interface AccountProfilesCache {
+  [wxid: string]: {
+    displayName: string
+    avatarUrl?: string
+    alias?: string
+    updatedAt: number
+  }
+}
+
+interface WxidOption {
+  wxid: string
+  modifiedTime: number
+  displayName?: string
+  avatarUrl?: string
 }
 
 const readSidebarUserProfileCache = (): SidebarUserProfile | null => {
@@ -46,8 +65,29 @@ const writeSidebarUserProfileCache = (profile: SidebarUserProfile): void => {
       updatedAt: Date.now()
     }
     window.localStorage.setItem(SIDEBAR_USER_PROFILE_CACHE_KEY, JSON.stringify(payload))
+
+    // 同时写入账号缓存池
+    const accountsCache = readAccountProfilesCache()
+    accountsCache[profile.wxid] = {
+      displayName: profile.displayName,
+      avatarUrl: profile.avatarUrl,
+      alias: profile.alias,
+      updatedAt: Date.now()
+    }
+    window.localStorage.setItem(ACCOUNT_PROFILES_CACHE_KEY, JSON.stringify(accountsCache))
   } catch {
     // 忽略本地缓存失败，不影响主流程
+  }
+}
+
+const readAccountProfilesCache = (): AccountProfilesCache => {
+  try {
+    const raw = window.localStorage.getItem(ACCOUNT_PROFILES_CACHE_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw)
+    return typeof parsed === 'object' && parsed ? parsed : {}
+  } catch {
+    return {}
   }
 }
 
@@ -76,12 +116,14 @@ function Sidebar({ collapsed }: SidebarProps) {
     displayName: '未识别用户'
   })
   const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false)
-  const [showClearAccountDialog, setShowClearAccountDialog] = useState(false)
-  const [shouldClearCacheData, setShouldClearCacheData] = useState(false)
-  const [shouldClearExportData, setShouldClearExportData] = useState(false)
-  const [isClearingAccountData, setIsClearingAccountData] = useState(false)
+  const [showSwitchAccountDialog, setShowSwitchAccountDialog] = useState(false)
+  const [wxidOptions, setWxidOptions] = useState<WxidOption[]>([])
+  const [isSwitchingAccount, setIsSwitchingAccount] = useState(false)
   const accountCardWrapRef = useRef<HTMLDivElement | null>(null)
   const setLocked = useAppStore(state => state.setLocked)
+  const isDbConnected = useAppStore(state => state.isDbConnected)
+  const resetChatStore = useChatStore(state => state.reset)
+  const clearAnalyticsStoreCache = useAnalyticsStore(state => state.clearCache)
 
   useEffect(() => {
     window.electronAPI.auth.verifyEnabled().then(setAuthEnabled)
@@ -143,6 +185,9 @@ function Sidebar({ collapsed }: SidebarProps) {
         const resolvedWxidRaw = String(wxid || '').trim()
         const cleanedWxid = normalizeAccountId(resolvedWxidRaw)
         const resolvedWxid = cleanedWxid || resolvedWxidRaw
+
+        if (!resolvedWxidRaw && !resolvedWxid) return
+
         const wxidCandidates = new Set<string>([
           resolvedWxidRaw.toLowerCase(),
           resolvedWxid.trim().toLowerCase(),
@@ -168,77 +213,36 @@ function Sidebar({ collapsed }: SidebarProps) {
           return undefined
         }
 
-        const fallbackDisplayName = resolvedWxid || '未识别用户'
+        // 并行获取名称和头像
+        const [contactResult, avatarResult] = await Promise.allSettled([
+          (async () => {
+            const candidates = Array.from(new Set([resolvedWxidRaw, resolvedWxid, cleanedWxid].filter(Boolean)))
+            for (const candidate of candidates) {
+              const contact = await window.electronAPI.chat.getContact(candidate)
+              if (contact?.remark || contact?.nickName || contact?.alias) {
+                return contact
+              }
+            }
+            return null
+          })(),
+          window.electronAPI.chat.getMyAvatarUrl()
+        ])
 
-        // 第一阶段：先把 wxid/名称打上，保证侧边栏第一时间可见。
+        const myContact = contactResult.status === 'fulfilled' ? contactResult.value : null
+        const displayName = pickFirstValidName(
+          myContact?.remark,
+          myContact?.nickName,
+          myContact?.alias
+        ) || resolvedWxid || '未识别用户'
+
         patchUserProfile({
           wxid: resolvedWxid,
-          displayName: fallbackDisplayName
+          displayName,
+          alias: myContact?.alias,
+          avatarUrl: avatarResult.status === 'fulfilled' && avatarResult.value.success
+            ? avatarResult.value.avatarUrl
+            : undefined
         })
-
-        if (!resolvedWxidRaw && !resolvedWxid) return
-
-        // 第二阶段：后台补齐名称（不会阻塞首屏）。
-        void (async () => {
-          try {
-            let myContact: Awaited<ReturnType<typeof window.electronAPI.chat.getContact>> | null = null
-            for (const candidate of Array.from(new Set([resolvedWxidRaw, resolvedWxid, cleanedWxid].filter(Boolean)))) {
-              const contact = await window.electronAPI.chat.getContact(candidate)
-              if (!contact) continue
-              if (!myContact) myContact = contact
-              if (contact.remark || contact.nickName || contact.alias) {
-                myContact = contact
-                break
-              }
-            }
-            const fromContact = pickFirstValidName(
-              myContact?.remark,
-              myContact?.nickName,
-              myContact?.alias
-            )
-
-            if (fromContact) {
-              patchUserProfile({ displayName: fromContact }, resolvedWxid)
-              // 同步补充微信号（alias）
-              if (myContact?.alias) {
-                patchUserProfile({ alias: myContact.alias }, resolvedWxid)
-              }
-              return
-            }
-
-            const enrichTargets = Array.from(new Set([resolvedWxidRaw, resolvedWxid, cleanedWxid, 'self'].filter(Boolean)))
-            const enrichedResult = await window.electronAPI.chat.enrichSessionsContactInfo(enrichTargets)
-            const enrichedDisplayName = pickFirstValidName(
-              enrichedResult.contacts?.[resolvedWxidRaw]?.displayName,
-              enrichedResult.contacts?.[resolvedWxid]?.displayName,
-              enrichedResult.contacts?.[cleanedWxid]?.displayName,
-              enrichedResult.contacts?.self?.displayName,
-              myContact?.alias
-            )
-            const bestName = enrichedDisplayName
-            if (bestName) {
-              patchUserProfile({ displayName: bestName }, resolvedWxid)
-            }
-            // 降级分支也补充微信号
-            if (myContact?.alias) {
-              patchUserProfile({ alias: myContact.alias }, resolvedWxid)
-            }
-          } catch (nameError) {
-            console.error('加载侧边栏用户昵称失败:', nameError)
-          }
-        })()
-
-        // 第二阶段：后台补齐头像（不会阻塞首屏）。
-        void (async () => {
-          try {
-            const avatarResult = await window.electronAPI.chat.getMyAvatarUrl()
-            if (avatarResult.success && avatarResult.avatarUrl) {
-              patchUserProfile({ avatarUrl: avatarResult.avatarUrl }, resolvedWxid)
-            }
-          } catch (avatarError) {
-            console.error('加载侧边栏用户头像失败:', avatarError)
-          }
-        })()
       } catch (error) {
         console.error('加载侧边栏用户信息失败:', error)
       }
@@ -246,10 +250,7 @@ function Sidebar({ collapsed }: SidebarProps) {
 
     const cachedProfile = readSidebarUserProfileCache()
     if (cachedProfile) {
-      setUserProfile(prev => ({
-        ...prev,
-        ...cachedProfile
-      }))
+      setUserProfile(cachedProfile)
     }
 
     void loadCurrentUser()
@@ -263,23 +264,107 @@ function Sidebar({ collapsed }: SidebarProps) {
     return [...name][0] || '?'
   }
 
-  const isActive = (path: string) => {
-    return location.pathname === path || location.pathname.startsWith(`${path}/`)
-  }
-  const exportTaskBadge = activeExportTaskCount > 99 ? '99+' : `${activeExportTaskCount}`
-  const canConfirmClear = shouldClearCacheData || shouldClearExportData
-
-  const resetClearDialogState = () => {
-    setShouldClearCacheData(false)
-    setShouldClearExportData(false)
-    setShowClearAccountDialog(false)
-  }
-
-  const openClearAccountDialog = () => {
+  const openSwitchAccountDialog = async () => {
     setIsAccountMenuOpen(false)
-    setShouldClearCacheData(false)
-    setShouldClearExportData(false)
-    setShowClearAccountDialog(true)
+    if (!isDbConnected) {
+      window.alert('数据库未连接，无法切换账号')
+      return
+    }
+    const dbPath = await configService.getDbPath()
+    if (!dbPath) {
+      window.alert('请先在设置中配置数据库路径')
+      return
+    }
+    try {
+      const wxids = await window.electronAPI.dbPath.scanWxids(dbPath)
+      const accountsCache = readAccountProfilesCache()
+      console.log('[切换账号] 账号缓存:', accountsCache)
+
+      const enrichedWxids = wxids.map(option => {
+        const normalizedWxid = normalizeAccountId(option.wxid)
+        const cached = accountsCache[option.wxid] || accountsCache[normalizedWxid]
+
+        if (option.wxid === userProfile.wxid || normalizedWxid === userProfile.wxid) {
+          return {
+            ...option,
+            displayName: userProfile.displayName,
+            avatarUrl: userProfile.avatarUrl
+          }
+        }
+        if (cached) {
+          console.log('[切换账号] 使用缓存:', option.wxid, cached)
+          return {
+            ...option,
+            displayName: cached.displayName,
+            avatarUrl: cached.avatarUrl
+          }
+        }
+        return { ...option, displayName: option.wxid }
+      })
+
+      setWxidOptions(enrichedWxids)
+      setShowSwitchAccountDialog(true)
+    } catch (error) {
+      console.error('扫描账号失败:', error)
+      window.alert('扫描账号失败，请稍后重试')
+    }
+  }
+
+  const handleSwitchAccount = async (selectedWxid: string) => {
+    if (!selectedWxid || isSwitchingAccount) return
+    setIsSwitchingAccount(true)
+    try {
+      console.log('[切换账号] 开始切换到:', selectedWxid)
+      const currentWxid = userProfile.wxid
+      if (currentWxid === selectedWxid) {
+        console.log('[切换账号] 已经是当前账号，跳过')
+        setShowSwitchAccountDialog(false)
+        setIsSwitchingAccount(false)
+        return
+      }
+
+      console.log('[切换账号] 设置新 wxid')
+      await configService.setMyWxid(selectedWxid)
+
+      console.log('[切换账号] 获取账号配置')
+      const wxidConfig = await configService.getWxidConfig(selectedWxid)
+      console.log('[切换账号] 配置内容:', wxidConfig)
+      if (wxidConfig?.decryptKey) {
+        console.log('[切换账号] 设置 decryptKey')
+        await configService.setDecryptKey(wxidConfig.decryptKey)
+      }
+      if (typeof wxidConfig?.imageXorKey === 'number') {
+        console.log('[切换账号] 设置 imageXorKey:', wxidConfig.imageXorKey)
+        await configService.setImageXorKey(wxidConfig.imageXorKey)
+      }
+      if (wxidConfig?.imageAesKey) {
+        console.log('[切换账号] 设置 imageAesKey')
+        await configService.setImageAesKey(wxidConfig.imageAesKey)
+      }
+
+      console.log('[切换账号] 检查数据库连接状态')
+      console.log('[切换账号] 数据库连接状态:', isDbConnected)
+      if (isDbConnected) {
+        console.log('[切换账号] 关闭数据库连接')
+        await window.electronAPI.chat.close()
+      }
+
+      console.log('[切换账号] 清除缓存')
+      window.localStorage.removeItem(SIDEBAR_USER_PROFILE_CACHE_KEY)
+      clearAnalyticsStoreCache()
+      resetChatStore()
+
+      console.log('[切换账号] 触发 wxid-changed 事件')
+      window.dispatchEvent(new CustomEvent('wxid-changed', { detail: { wxid: selectedWxid } }))
+
+      console.log('[切换账号] 切换成功')
+      setShowSwitchAccountDialog(false)
+    } catch (error) {
+      console.error('[切换账号] 失败:', error)
+      window.alert('切换账号失败，请稍后重试')
+    } finally {
+      setIsSwitchingAccount(false)
+    }
   }
 
   const openSettingsFromAccountMenu = () => {
@@ -291,167 +376,128 @@ function Sidebar({ collapsed }: SidebarProps) {
     })
   }
 
-  const handleConfirmClearAccountData = async () => {
-    if (!canConfirmClear || isClearingAccountData) return
-    setIsClearingAccountData(true)
-    try {
-      const result = await window.electronAPI.chat.clearCurrentAccountData({
-        clearCache: shouldClearCacheData,
-        clearExports: shouldClearExportData
-      })
-      if (!result.success) {
-        window.alert(result.error || '清理失败，请稍后重试。')
-        return
-      }
-      window.localStorage.removeItem(SIDEBAR_USER_PROFILE_CACHE_KEY)
-      setUserProfile({ wxid: '', displayName: '未识别用户' })
-      window.dispatchEvent(new Event('wxid-changed'))
-
-      const removedPaths = Array.isArray(result.removedPaths) ? result.removedPaths : []
-      const selectedScopes = [
-        shouldClearCacheData ? '缓存数据' : '',
-        shouldClearExportData ? '导出数据' : ''
-      ].filter(Boolean)
-      const detailLines: string[] = [
-        `清理范围：${selectedScopes.join('、') || '未选择'}`,
-        `已清理项目：${removedPaths.length} 项`
-      ]
-      if (removedPaths.length > 0) {
-        detailLines.push('', '清理明细（最多显示 8 项）：')
-        for (const [index, path] of removedPaths.slice(0, 8).entries()) {
-          detailLines.push(`${index + 1}. ${path}`)
-        }
-        if (removedPaths.length > 8) {
-          detailLines.push(`... 其余 ${removedPaths.length - 8} 项已省略`)
-        }
-      }
-      if (result.warning) {
-        detailLines.push('', `注意：${result.warning}`)
-      }
-      const followupHint = shouldClearCacheData
-        ? '若需再次获取数据，请手动登录微信客户端并重新在 WeFlow 完成配置。'
-        : '你可以继续使用当前登录状态，无需重新登录。'
-      window.alert(`账号数据清理完成。\n\n${detailLines.join('\n')}\n\n为保障数据安全，WeFlow 已清除该账号本地缓存/导出相关数据。${followupHint}`)
-      resetClearDialogState()
-      if (shouldClearCacheData) {
-        window.location.reload()
-      }
-    } catch (error) {
-      console.error('清理账号数据失败:', error)
-      window.alert('清理失败，请稍后重试。')
-    } finally {
-      setIsClearingAccountData(false)
-    }
+  const isActive = (path: string) => {
+    return location.pathname === path || location.pathname.startsWith(`${path}/`)
   }
+  const exportTaskBadge = activeExportTaskCount > 99 ? '99+' : `${activeExportTaskCount}`
 
   return (
-    <aside className={`sidebar ${collapsed ? 'collapsed' : ''}`}>
-      <nav className="nav-menu">
-        {/* 首页 */}
-        <NavLink
-          to="/home"
-          className={`nav-item ${isActive('/home') ? 'active' : ''}`}
-          title={collapsed ? '首页' : undefined}
-        >
-          <span className="nav-icon"><Home size={20} /></span>
-          <span className="nav-label">首页</span>
-        </NavLink>
+    <>
+      <aside className={`sidebar ${collapsed ? 'collapsed' : ''}`}>
+        <nav className="nav-menu">
+          {/* 首页 */}
+          <NavLink
+            to="/home"
+            className={`nav-item ${isActive('/home') ? 'active' : ''}`}
+            title={collapsed ? '首页' : undefined}
+          >
+            <span className="nav-icon"><Home size={20} /></span>
+            <span className="nav-label">首页</span>
+          </NavLink>
 
-        {/* 聊天 */}
-        <NavLink
-          to="/chat"
-          className={`nav-item ${isActive('/chat') ? 'active' : ''}`}
-          title={collapsed ? '聊天' : undefined}
-        >
-          <span className="nav-icon"><MessageSquare size={20} /></span>
-          <span className="nav-label">聊天</span>
-        </NavLink>
+          {/* 聊天 */}
+          <NavLink
+            to="/chat"
+            className={`nav-item ${isActive('/chat') ? 'active' : ''}`}
+            title={collapsed ? '聊天' : undefined}
+          >
+            <span className="nav-icon"><MessageSquare size={20} /></span>
+            <span className="nav-label">聊天</span>
+          </NavLink>
 
-        {/* 朋友圈 */}
-        <NavLink
-          to="/sns"
-          className={`nav-item ${isActive('/sns') ? 'active' : ''}`}
-          title={collapsed ? '朋友圈' : undefined}
-        >
-          <span className="nav-icon"><Aperture size={20} /></span>
-          <span className="nav-label">朋友圈</span>
-        </NavLink>
+          {/* 朋友圈 */}
+          <NavLink
+            to="/sns"
+            className={`nav-item ${isActive('/sns') ? 'active' : ''}`}
+            title={collapsed ? '朋友圈' : undefined}
+          >
+            <span className="nav-icon"><Aperture size={20} /></span>
+            <span className="nav-label">朋友圈</span>
+          </NavLink>
 
-        {/* 通讯录 */}
-        <NavLink
-          to="/contacts"
-          className={`nav-item ${isActive('/contacts') ? 'active' : ''}`}
-          title={collapsed ? '通讯录' : undefined}
-        >
-          <span className="nav-icon"><UserCircle size={20} /></span>
-          <span className="nav-label">通讯录</span>
-        </NavLink>
+          {/* 通讯录 */}
+          <NavLink
+            to="/contacts"
+            className={`nav-item ${isActive('/contacts') ? 'active' : ''}`}
+            title={collapsed ? '通讯录' : undefined}
+          >
+            <span className="nav-icon"><UserCircle size={20} /></span>
+            <span className="nav-label">通讯录</span>
+          </NavLink>
 
-        {/* 聊天分析 */}
-        <NavLink
-          to="/analytics"
-          className={`nav-item ${isActive('/analytics') ? 'active' : ''}`}
-          title={collapsed ? '聊天分析' : undefined}
-        >
-          <span className="nav-icon"><BarChart3 size={20} /></span>
-          <span className="nav-label">聊天分析</span>
-        </NavLink>
+          {/* 聊天分析 */}
+          <NavLink
+            to="/analytics"
+            className={`nav-item ${isActive('/analytics') ? 'active' : ''}`}
+            title={collapsed ? '聊天分析' : undefined}
+          >
+            <span className="nav-icon"><BarChart3 size={20} /></span>
+            <span className="nav-label">聊天分析</span>
+          </NavLink>
 
-        {/* 年度报告 */}
-        <NavLink
-          to="/annual-report"
-          className={`nav-item ${isActive('/annual-report') ? 'active' : ''}`}
-          title={collapsed ? '年度报告' : undefined}
-        >
-          <span className="nav-icon"><FileText size={20} /></span>
-          <span className="nav-label">年度报告</span>
-        </NavLink>
+          {/* 年度报告 */}
+          <NavLink
+            to="/annual-report"
+            className={`nav-item ${isActive('/annual-report') ? 'active' : ''}`}
+            title={collapsed ? '年度报告' : undefined}
+          >
+            <span className="nav-icon"><FileText size={20} /></span>
+            <span className="nav-label">年度报告</span>
+          </NavLink>
 
-        {/* 导出 */}
-        <NavLink
-          to="/export"
-          className={`nav-item ${isActive('/export') ? 'active' : ''}`}
-          title={collapsed ? '导出' : undefined}
-        >
-          <span className="nav-icon nav-icon-with-badge">
-            <Download size={20} />
-            {collapsed && activeExportTaskCount > 0 && (
-              <span className="nav-badge icon-badge">{exportTaskBadge}</span>
+          {/* 导出 */}
+          <NavLink
+            to="/export"
+            className={`nav-item ${isActive('/export') ? 'active' : ''}`}
+            title={collapsed ? '导出' : undefined}
+          >
+            <span className="nav-icon nav-icon-with-badge">
+              <Download size={20} />
+              {collapsed && activeExportTaskCount > 0 && (
+                <span className="nav-badge icon-badge">{exportTaskBadge}</span>
+              )}
+            </span>
+            <span className="nav-label">导出</span>
+            {!collapsed && activeExportTaskCount > 0 && (
+              <span className="nav-badge">{exportTaskBadge}</span>
             )}
-          </span>
-          <span className="nav-label">导出</span>
-          {!collapsed && activeExportTaskCount > 0 && (
-            <span className="nav-badge">{exportTaskBadge}</span>
-          )}
-        </NavLink>
+          </NavLink>
 
 
-      </nav>
+        </nav>
 
-      <div className="sidebar-footer">
-        <button
-          className="nav-item"
-          onClick={() => {
-            if (authEnabled) {
-              setLocked(true)
-              return
-            }
-            navigate('/settings', {
-              state: {
-                initialTab: 'security',
-                backgroundLocation: location
+        <div className="sidebar-footer">
+          <button
+            className="nav-item"
+            onClick={() => {
+              if (authEnabled) {
+                setLocked(true)
+                return
               }
-            })
-          }}
-          title={collapsed ? (authEnabled ? '锁定' : '未锁定') : undefined}
-        >
-          <span className="nav-icon">{authEnabled ? <Lock size={20} /> : <LockOpen size={20} />}</span>
-          <span className="nav-label">{authEnabled ? '锁定' : '未锁定'}</span>
-        </button>
+              navigate('/settings', {
+                state: {
+                  initialTab: 'security',
+                  backgroundLocation: location
+                }
+              })
+            }}
+            title={collapsed ? (authEnabled ? '锁定' : '未锁定') : undefined}
+          >
+            <span className="nav-icon">{authEnabled ? <Lock size={20} /> : <LockOpen size={20} />}</span>
+            <span className="nav-label">{authEnabled ? '锁定' : '未锁定'}</span>
+          </button>
 
-        <div className="sidebar-user-card-wrap" ref={accountCardWrapRef}>
-          {isAccountMenuOpen && (
-            <div className="sidebar-user-menu" role="menu" aria-label="账号菜单">
+          <div className="sidebar-user-card-wrap" ref={accountCardWrapRef}>
+            <div className={`sidebar-user-menu ${isAccountMenuOpen ? 'open' : ''}`} role="menu" aria-label="账号菜单">
+              <button
+                className="sidebar-user-menu-item"
+                onClick={openSwitchAccountDialog}
+                type="button"
+                role="menuitem"
+              >
+                <RefreshCw size={14} />
+                <span>切换账号</span>
+              </button>
               <button
                 className="sidebar-user-menu-item"
                 onClick={openSettingsFromAccountMenu}
@@ -461,89 +507,69 @@ function Sidebar({ collapsed }: SidebarProps) {
                 <Settings size={14} />
                 <span>设置</span>
               </button>
-              <button
-                className="sidebar-user-menu-item danger"
-                onClick={openClearAccountDialog}
-                type="button"
-                role="menuitem"
-              >
-                <Trash2 size={14} />
-                <span>清除数据</span>
-              </button>
             </div>
-          )}
-          <div
-            className={`sidebar-user-card ${isAccountMenuOpen ? 'menu-open' : ''}`}
-            title={collapsed ? `${userProfile.displayName}${(userProfile.alias || userProfile.wxid) ? `\n${userProfile.alias || userProfile.wxid}` : ''}` : undefined}
-            onClick={() => setIsAccountMenuOpen(prev => !prev)}
-            role="button"
-            tabIndex={0}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' || event.key === ' ') {
-                event.preventDefault()
-                setIsAccountMenuOpen(prev => !prev)
-              }
-            }}
-          >
-            <div className="user-avatar">
-              {userProfile.avatarUrl ? <img src={userProfile.avatarUrl} alt="" /> : <span>{getAvatarLetter(userProfile.displayName)}</span>}
+            <div
+              className={`sidebar-user-card ${isAccountMenuOpen ? 'menu-open' : ''}`}
+              title={collapsed ? `${userProfile.displayName}${(userProfile.alias || userProfile.wxid) ? `\n${userProfile.alias || userProfile.wxid}` : ''}` : undefined}
+              onClick={() => setIsAccountMenuOpen(prev => !prev)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault()
+                  setIsAccountMenuOpen(prev => !prev)
+                }
+              }}
+            >
+              <div className="user-avatar">
+                {userProfile.avatarUrl ? <img src={userProfile.avatarUrl} alt="" /> : <span>{getAvatarLetter(userProfile.displayName)}</span>}
+              </div>
+              <div className="user-meta">
+                <div className="user-name">{userProfile.displayName}</div>
+                <div className="user-wxid">{userProfile.alias || userProfile.wxid || 'wxid 未识别'}</div>
+              </div>
+              {!collapsed && (
+                <span className={`user-menu-caret ${isAccountMenuOpen ? 'open' : ''}`}>
+                  <ChevronUp size={14} />
+                </span>
+              )}
             </div>
-            <div className="user-meta">
-              <div className="user-name">{userProfile.displayName}</div>
-              <div className="user-wxid">{userProfile.alias || userProfile.wxid || 'wxid 未识别'}</div>
-            </div>
-            {!collapsed && (
-              <span className={`user-menu-caret ${isAccountMenuOpen ? 'open' : ''}`}>
-                <ChevronUp size={14} />
-              </span>
-            )}
           </div>
         </div>
-      </div>
+      </aside>
 
-      {showClearAccountDialog && (
-        <div className="sidebar-clear-dialog-overlay" onClick={() => !isClearingAccountData && resetClearDialogState()}>
-          <div className="sidebar-clear-dialog" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
-            <h3>清除此账号所有数据</h3>
-            <p>
-              操作后可将该账户在 weflow 下产生的所有缓存文件、导出文件等彻底清除。
-              清除后必须手动登录微信客户端 weflow 才能再次获取，保障你的数据安全。
-            </p>
-            <div className="sidebar-clear-options">
-              <label>
-                <input
-                  type="checkbox"
-                  checked={shouldClearCacheData}
-                  onChange={(event) => setShouldClearCacheData(event.target.checked)}
-                  disabled={isClearingAccountData}
-                />
-                缓存数据
-              </label>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={shouldClearExportData}
-                  onChange={(event) => setShouldClearExportData(event.target.checked)}
-                  disabled={isClearingAccountData}
-                />
-                导出数据
-              </label>
+      {showSwitchAccountDialog && (
+        <div className="sidebar-dialog-overlay" onClick={() => !isSwitchingAccount && setShowSwitchAccountDialog(false)}>
+          <div className="sidebar-dialog" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+            <h3>切换账号</h3>
+            <p>选择要切换的微信账号</p>
+            <div className="sidebar-wxid-list">
+              {wxidOptions.map((option) => (
+                <button
+                  key={option.wxid}
+                  className={`sidebar-wxid-item ${userProfile.wxid === option.wxid ? 'current' : ''}`}
+                  onClick={() => handleSwitchAccount(option.wxid)}
+                  disabled={isSwitchingAccount}
+                  type="button"
+                >
+                  <div className="wxid-avatar">
+                    {option.avatarUrl ? <img src={option.avatarUrl} alt="" /> : <span>{getAvatarLetter(option.displayName || option.wxid)}</span>}
+                  </div>
+                  <div className="wxid-info">
+                    <div className="wxid-name">{option.displayName || option.wxid}</div>
+                    <div className="wxid-id">{option.wxid}</div>
+                  </div>
+                  {userProfile.wxid === option.wxid && <span className="current-badge">当前</span>}
+                </button>
+              ))}
             </div>
-            <div className="sidebar-clear-actions">
-              <button type="button" onClick={resetClearDialogState} disabled={isClearingAccountData}>取消</button>
-              <button
-                type="button"
-                className="danger"
-                disabled={!canConfirmClear || isClearingAccountData}
-                onClick={handleConfirmClearAccountData}
-              >
-                {isClearingAccountData ? '清除中...' : '确认清除'}
-              </button>
+            <div className="sidebar-dialog-actions">
+              <button type="button" onClick={() => setShowSwitchAccountDialog(false)} disabled={isSwitchingAccount}>取消</button>
             </div>
           </div>
         </div>
       )}
-    </aside>
+    </>
   )
 }
 

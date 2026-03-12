@@ -209,16 +209,7 @@ function AnnualReportPage() {
     return (
       <div className="annual-report-page">
         <Loader2 size={32} className="spin" style={{ color: 'var(--text-tertiary)' }} />
-        <p style={{ color: 'var(--text-tertiary)', marginTop: 16 }}>正在加载年份数据（首批）...</p>
-        <div className="load-telemetry compact">
-          <p><span className="label">加载方式：</span>{getStrategyLabel({ loadStrategy, loadPhase, hasYearsLoadFinished, hasSwitchedStrategy, nativeTimedOut })}</p>
-          <p><span className="label">状态：</span>{loadStatusText || '正在加载年份数据...'}</p>
-          <p>
-            <span className="label">原生耗时：</span>{formatLoadElapsed(nativeElapsedMs)}{nativeTimedOut ? '（超时）' : ''} ｜{' '}
-            <span className="label">扫表耗时：</span>{formatLoadElapsed(scanElapsedMs)} ｜{' '}
-            <span className="label">总耗时：</span>{formatLoadElapsed(totalElapsedMs)}
-          </p>
-        </div>
+        <p style={{ color: 'var(--text-tertiary)', marginTop: 16 }}>正在准备年度报告...</p>
       </div>
     )
   }
@@ -264,30 +255,6 @@ function AnnualReportPage() {
       <Sparkles size={32} className="header-icon" />
       <h1 className="page-title">年度报告</h1>
       <p className="page-desc">选择年份，回顾你在微信里的点点滴滴</p>
-      {loadedYearCount > 0 && (
-        <p className={`page-desc load-summary ${isYearStatusComplete ? 'complete' : 'loading'}`}>
-          {isYearStatusComplete ? (
-            <>已显示 {loadedYearCount} 个年份，年份数据已全部加载完毕。总耗时 {formatLoadElapsed(totalElapsedMs)}</>
-          ) : (
-            <>
-              已显示 {loadedYearCount} 个年份，正在补充更多年份<span className="dot-ellipsis" aria-hidden="true">...</span>
-              （已耗时 {formatLoadElapsed(totalElapsedMs)}）
-            </>
-          )}
-        </p>
-      )}
-      <div className={`load-telemetry ${isYearStatusComplete ? 'complete' : 'loading'}`}>
-        <p><span className="label">加载方式：</span>{strategyLabel}</p>
-        <p>
-          <span className="label">状态：</span>
-          {loadStatusText || (isYearStatusComplete ? '全部年份已加载完毕' : '正在加载年份数据...')}
-        </p>
-        <p>
-          <span className="label">原生耗时：</span>{formatLoadElapsed(nativeElapsedMs)}{nativeTimedOut ? '（超时）' : ''} ｜{' '}
-          <span className="label">扫表耗时：</span>{formatLoadElapsed(scanElapsedMs)} ｜{' '}
-          <span className="label">总耗时：</span>{formatLoadElapsed(totalElapsedMs)}
-        </p>
-      </div>
 
       <div className="report-sections">
         <section className="report-section">
@@ -311,7 +278,6 @@ function AnnualReportPage() {
                 </div>
               ))}
             </div>
-            {renderYearLoadStatus()}
           </div>
 
           <button
@@ -358,7 +324,6 @@ function AnnualReportPage() {
                 </div>
               ))}
             </div>
-            {renderYearLoadStatus()}
           </div>
 
           <button

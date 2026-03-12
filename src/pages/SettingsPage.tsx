@@ -134,6 +134,7 @@ function SettingsPage({ onClose }: SettingsPageProps = {}) {
   const [isClearingAnalyticsCache, setIsClearingAnalyticsCache] = useState(false)
   const [isClearingImageCache, setIsClearingImageCache] = useState(false)
   const [isClearingAllCache, setIsClearingAllCache] = useState(false)
+  const [isClosing, setIsClosing] = useState(false)
   const saveTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
 
   // 安全设置 state
@@ -203,7 +204,7 @@ function SettingsPage({ onClose }: SettingsPageProps = {}) {
     if (!onClose) return
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
-        onClose()
+        handleClose()
       }
     }
     document.addEventListener('keydown', handleKeyDown)
@@ -443,6 +444,14 @@ function SettingsPage({ onClose }: SettingsPageProps = {}) {
   const showMessage = (text: string, success: boolean) => {
     setMessage({ text, success })
     setTimeout(() => setMessage(null), 3000)
+  }
+
+  const handleClose = () => {
+    if (!onClose) return
+    setIsClosing(true)
+    setTimeout(() => {
+      onClose()
+    }, 200)
   }
 
   type WxidKeys = {
@@ -2076,8 +2085,8 @@ function SettingsPage({ onClose }: SettingsPageProps = {}) {
   )
 
   return (
-    <div className="settings-modal-overlay" onClick={() => onClose?.()}>
-      <div className="settings-page" onClick={(event) => event.stopPropagation()}>
+    <div className={`settings-modal-overlay ${isClosing ? 'closing' : ''}`} onClick={handleClose}>
+      <div className={`settings-page ${isClosing ? 'closing' : ''}`} onClick={(event) => event.stopPropagation()}>
         {message && <div className={`message-toast ${message.success ? 'success' : 'error'}`}>{message.text}</div>}
 
         {/* 多账号选择对话框 */}
@@ -2116,7 +2125,7 @@ function SettingsPage({ onClose }: SettingsPageProps = {}) {
               <Plug size={16} /> {isTesting ? '测试中...' : '测试连接'}
             </button>
             {onClose && (
-              <button type="button" className="settings-close-btn" onClick={onClose} aria-label="关闭设置">
+              <button type="button" className="settings-close-btn" onClick={handleClose} aria-label="关闭设置">
                 <X size={18} />
               </button>
             )}

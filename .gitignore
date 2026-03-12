@@ -63,6 +63,7 @@ chatlab-format.md
 *.bak
 AGENTS.md
 .claude/
+CLAUDE.md
 .agents/
 resources/wx_send
 概述.md
