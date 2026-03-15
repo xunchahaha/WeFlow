@@ -436,6 +436,10 @@ export class ImageDecryptService {
     if (imageMd5) {
       const res = await this.fastProbabilisticSearch(join(accountDir, 'msg', 'attach'), imageMd5, allowThumbnail)
       if (res) return res
+      if (imageDatName && imageDatName !== imageMd5 && this.looksLikeMd5(imageDatName)) {
+        const datNameRes = await this.fastProbabilisticSearch(join(accountDir, 'msg', 'attach'), imageDatName, allowThumbnail)
+        if (datNameRes) return datNameRes
+      }
     }
 
     // 2. 如果 imageDatName 看起来像 MD5，也尝试快速定位
@@ -889,7 +893,8 @@ export class ImageDecryptService {
 
         const now = new Date()
         const months: string[] = []
-        for (let i = 0; i < 2; i++) {
+        // Imported mobile history can live in older YYYY-MM buckets; keep this bounded but wider than "recent 2 months".
+        for (let i = 0; i < 24; i++) {
           const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
           const mStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
           months.push(mStr)
