@@ -12,6 +12,7 @@ permissions:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   FIXED_DEV_TAG: nightly-dev
+  ELECTRON_BUILDER_BINARIES_MIRROR: https://github.com/electron-userland/electron-builder-binaries/releases/download/
 
 jobs:
   prepare:
@@ -83,7 +84,10 @@ jobs:
           npx vite build
 
       - name: Package macOS arm64 dev artifacts
+        shell: bash
         run: |
+          export ELECTRON_BUILDER_BINARIES_MIRROR="https://github.com/electron-userland/electron-builder-binaries/releases/download/"
+          echo "Using ELECTRON_BUILDER_BINARIES_MIRROR=$ELECTRON_BUILDER_BINARIES_MIRROR"
           npx electron-builder --mac dmg --arm64 --publish never '--config.publish.channel=dev' '--config.artifactName=${productName}-dev-arm64.${ext}'
 
       - name: Upload macOS arm64 assets to fixed release
@@ -226,3 +230,81 @@ jobs:
             exit 1
           fi
           gh release upload "$FIXED_DEV_TAG" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+
+  update-dev-release-notes:
+    needs:
+      - prepare
+      - dev-mac-arm64
+      - dev-linux
+      - dev-win-x64
+      - dev-win-arm64
+    if: always() && needs.prepare.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Update fixed dev release notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FIXED_DEV_TAG: ${{ env.FIXED_DEV_TAG }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TAG="$FIXED_DEV_TAG"
+          REPO="$GITHUB_REPOSITORY"
+          RELEASE_PAGE="https://github.com/$REPO/releases/tag/$TAG"
+
+          if ! gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            echo "Release $TAG not found, skip notes update."
+            exit 0
+          fi
+
+          ASSETS_JSON="$(gh release view "$TAG" --repo "$REPO" --json assets)"
+
+          pick_asset() {
+            local pattern="$1"
+            echo "$ASSETS_JSON" | jq -r --arg p "$pattern" '[.assets[].name | select(test($p))][0] // ""'
+          }
+
+          WINDOWS_ASSET="$(pick_asset "dev-x64-Setup[.]exe$")"
+          WINDOWS_ARM64_ASSET="$(pick_asset "dev-arm64-Setup[.]exe$")"
+          MAC_ASSET="$(pick_asset "dev-arm64[.]dmg$")"
+          LINUX_TAR_ASSET="$(pick_asset "dev-linux[.]tar[.]gz$")"
+          LINUX_APPIMAGE_ASSET="$(pick_asset "dev-linux[.]AppImage$")"
+
+          build_link() {
+            local name="$1"
+            if [ -n "$name" ]; then
+              echo "https://github.com/$REPO/releases/download/$TAG/$name"
+            fi
+          }
+
+          WINDOWS_URL="$(build_link "$WINDOWS_ASSET")"
+          WINDOWS_ARM64_URL="$(build_link "$WINDOWS_ARM64_ASSET")"
+          MAC_URL="$(build_link "$MAC_ASSET")"
+          LINUX_TAR_URL="$(build_link "$LINUX_TAR_ASSET")"
+          LINUX_APPIMAGE_URL="$(build_link "$LINUX_APPIMAGE_ASSET")"
+
+          cat > dev_release_notes.md <<EOF
+          ## Daily Dev Build
+          - 该发布页为 **开发版**。
+          - 当前构建版本：\`${{ needs.prepare.outputs.dev_version }}\`
+          - 此版本为每日构建的开发版，包含最新的功能和修复，但可能不够稳定，仅推荐用于测试和验证。
+
+          ## 下载
+          - Windows x64: ${WINDOWS_URL:-$RELEASE_PAGE}
+          - Windows arm64: ${WINDOWS_ARM64_URL:-$RELEASE_PAGE}
+          - macOS（Apple Silicon）: ${MAC_URL:-$RELEASE_PAGE}
+          - Linux (.tar.gz): ${LINUX_TAR_URL:-$RELEASE_PAGE}
+          - Linux (.AppImage): ${LINUX_APPIMAGE_URL:-$RELEASE_PAGE}
+
+          ## macOS 安装提示
+          - 如果被系统提示已损坏，你需要在终端执行以下命令去除隔离标记：
+          - \`xattr -dr com.apple.quarantine "/Applications/WeFlow.app"\`
+          - 执行后重新打开 WeFlow。
+
+          ## 说明
+          - 该发布页的同名资源会被后续构建覆盖，请勿将其视作长期归档版本。
+          - 如某个平台资源暂未生成，请进入发布页查看最新状态：$RELEASE_PAGE
+          EOF
+
+          gh release edit "$TAG" --repo "$REPO" --title "Daily Dev Build" --notes-file dev_release_notes.md

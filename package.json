@@ -193,11 +193,6 @@
   "overrides": {
     "picomatch": "^4.0.4",
     "tar": "^7.5.13",
-    "immutable": "^5.1.5",
-    "ajv": "^8.17.1",
-    "@develar/schema-utils": {
-      "ajv": "^6.12.6",
-      "ajv-keywords": "^3.5.2"
-    }
+    "immutable": "^5.1.5"
   }
 }

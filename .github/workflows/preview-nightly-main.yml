@@ -11,6 +11,7 @@ permissions:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  ELECTRON_BUILDER_BINARIES_MIRROR: https://github.com/electron-userland/electron-builder-binaries/releases/download/
 
 jobs:
   prepare:
@@ -91,7 +92,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        shell: bash
         run: |
+          export ELECTRON_BUILDER_BINARIES_MIRROR="https://github.com/electron-userland/electron-builder-binaries/releases/download/"
+          echo "Using ELECTRON_BUILDER_BINARIES_MIRROR=$ELECTRON_BUILDER_BINARIES_MIRROR"
           npx electron-builder --mac dmg --arm64 --publish always '--config.publish.releaseType=prerelease' '--config.publish.channel=preview'
 
   preview-linux:
@@ -195,3 +199,80 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           npx electron-builder --win nsis --arm64 --publish always '--config.publish.releaseType=prerelease' '--config.publish.channel=preview-arm64' '--config.artifactName=${productName}-${version}-arm64-Setup.${ext}'
+
+  update-preview-release-notes:
+    needs:
+      - prepare
+      - preview-mac-arm64
+      - preview-linux
+      - preview-win-x64
+      - preview-win-arm64
+    if: needs.prepare.outputs.should_build == 'true' && always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Update preview release notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TAG="v${{ needs.prepare.outputs.preview_version }}"
+          REPO="$GITHUB_REPOSITORY"
+          RELEASE_PAGE="https://github.com/$REPO/releases/tag/$TAG"
+
+          if ! gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            echo "Release $TAG not found (possibly all publish jobs failed), skip notes update."
+            exit 0
+          fi
+
+          ASSETS_JSON="$(gh release view "$TAG" --repo "$REPO" --json assets)"
+
+          pick_asset() {
+            local pattern="$1"
+            echo "$ASSETS_JSON" | jq -r --arg p "$pattern" '[.assets[].name | select(test($p))][0] // ""'
+          }
+
+          WINDOWS_ASSET="$(pick_asset "x64.*[.]exe$")"
+          if [ -z "$WINDOWS_ASSET" ]; then
+            WINDOWS_ASSET="$(echo "$ASSETS_JSON" | jq -r '[.assets[].name | select(test("[.]exe$")) | select(test("arm64") | not)][0] // ""')"
+          fi
+          WINDOWS_ARM64_ASSET="$(pick_asset "arm64.*[.]exe$")"
+          MAC_ASSET="$(pick_asset "[.]dmg$")"
+          LINUX_TAR_ASSET="$(pick_asset "[.]tar[.]gz$")"
+          LINUX_APPIMAGE_ASSET="$(pick_asset "[.]AppImage$")"
+
+          build_link() {
+            local name="$1"
+            if [ -n "$name" ]; then
+              echo "https://github.com/$REPO/releases/download/$TAG/$name"
+            fi
+          }
+
+          WINDOWS_URL="$(build_link "$WINDOWS_ASSET")"
+          WINDOWS_ARM64_URL="$(build_link "$WINDOWS_ARM64_ASSET")"
+          MAC_URL="$(build_link "$MAC_ASSET")"
+          LINUX_TAR_URL="$(build_link "$LINUX_TAR_ASSET")"
+          LINUX_APPIMAGE_URL="$(build_link "$LINUX_APPIMAGE_ASSET")"
+
+          cat > preview_release_notes.md <<EOF
+          ## Preview Nightly 说明
+          - 该版本为 **预览版**，用于提前体验即将发布的功能与修复。
+          - 可能包含尚未完全稳定的改动，不建议长期使用
+
+          ## 下载
+          - Windows x64: ${WINDOWS_URL:-$RELEASE_PAGE}
+          - Windows arm64: ${WINDOWS_ARM64_URL:-$RELEASE_PAGE}
+          - macOS（Apple Silicon）: ${MAC_URL:-$RELEASE_PAGE}
+          - Linux (.tar.gz): ${LINUX_TAR_URL:-$RELEASE_PAGE}
+          - Linux (.AppImage): ${LINUX_APPIMAGE_URL:-$RELEASE_PAGE}
+
+          ## macOS 安装提示
+          - 如果被系统提示已损坏，你需要在终端执行以下命令去除隔离标记：
+          - \`xattr -dr com.apple.quarantine "/Applications/WeFlow.app"\`
+          - 执行后重新打开 WeFlow。
+
+          > 如某个平台链接暂未生成，请前往发布页查看最新资源：$RELEASE_PAGE
+          EOF
+
+          gh release edit "$TAG" --repo "$REPO" --notes-file preview_release_notes.md

@@ -57,9 +57,13 @@ const normalizeUpdateTrack = (raw: unknown): 'stable' | 'preview' | 'dev' | null
   return null
 }
 
-const applyAutoUpdateChannel = (reason: 'startup' | 'settings' = 'startup') => {
+const getEffectiveUpdateTrack = (): 'stable' | 'preview' | 'dev' => {
   const configuredTrack = normalizeUpdateTrack(configService?.get('updateChannel'))
-  const track: 'stable' | 'preview' | 'dev' = configuredTrack || defaultUpdateTrack
+  return configuredTrack || defaultUpdateTrack
+}
+
+const applyAutoUpdateChannel = (reason: 'startup' | 'settings' = 'startup') => {
+  const track = getEffectiveUpdateTrack()
   const baseUpdateChannel = track === 'stable' ? 'latest' : track
   autoUpdater.allowPrerelease = track !== 'stable'
   autoUpdater.allowDowngrade = isPrereleaseBuild && track === 'stable'
@@ -271,6 +275,14 @@ const normalizeReleaseNotes = (rawReleaseNotes: unknown): string => {
     .trim()
 
   return cleaned
+}
+
+const getDialogReleaseNotes = (rawReleaseNotes: unknown): string => {
+  const track = getEffectiveUpdateTrack()
+  if (track !== 'stable') {
+    return '修复了一些已知问题'
+  }
+  return normalizeReleaseNotes(rawReleaseNotes)
 }
 
 type AnnualReportYearsLoadStrategy = 'cache' | 'native' | 'hybrid'
@@ -1276,7 +1288,7 @@ function registerIpcHandlers() {
           return {
             hasUpdate: true,
             version: latestVersion,
-            releaseNotes: normalizeReleaseNotes(result.updateInfo.releaseNotes),
+            releaseNotes: getDialogReleaseNotes(result.updateInfo.releaseNotes),
             minimumVersion: (result.updateInfo as any).minimumVersion
           }
         }
@@ -2741,7 +2753,7 @@ function checkForUpdatesOnStartup() {
           // 通知渲染进程有新版本
           mainWindow.webContents.send('app:updateAvailable', {
             version: latestVersion,
-            releaseNotes: normalizeReleaseNotes(result.updateInfo.releaseNotes),
+            releaseNotes: getDialogReleaseNotes(result.updateInfo.releaseNotes),
             minimumVersion: (result.updateInfo as any).minimumVersion
           })
         }

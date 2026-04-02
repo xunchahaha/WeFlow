@@ -15,8 +15,41 @@ export default defineConfig({
     strictPort: false  // 如果3000被占用，自动尝试下一个
   },
   build: {
+    chunkSizeWarningLimit: 900,
     commonjsOptions: {
       ignoreDynamicRequires: true
+    },
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return
+
+          if (id.includes('/react/') || id.includes('/react-dom/') || id.includes('/react-router')) {
+            return 'vendor-react'
+          }
+
+          if (id.includes('/echarts') || id.includes('/echarts-for-react')) {
+            return 'vendor-echarts'
+          }
+
+          if (
+            id.includes('/react-markdown') ||
+            id.includes('/remark-gfm') ||
+            id.includes('/mdast-') ||
+            id.includes('/micromark-') ||
+            id.includes('/unified') ||
+            id.includes('/vfile')
+          ) {
+            return 'vendor-markdown'
+          }
+
+          if (id.includes('/jszip') || id.includes('/exceljs')) {
+            return 'vendor-export'
+          }
+
+          return 'vendor-misc'
+        }
+      }
     }
   },
   optimizeDeps: {
