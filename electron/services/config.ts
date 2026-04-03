@@ -128,7 +128,7 @@ export class ConfigService {
       httpApiToken: '',
       httpApiEnabled: false,
       httpApiPort: 5031,
-      httpApiHost: '127.0.0.1',
+      httpApiHost: '0.0.0.0',
       messagePushEnabled: false,
       windowCloseBehavior: 'ask',
       quoteLayout: 'quote-top',
