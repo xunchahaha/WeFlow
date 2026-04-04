@@ -94,6 +94,7 @@ export interface ExportDefaultMediaConfig {
   videos: boolean
   voices: boolean
   emojis: boolean
+  files: boolean
 }
 
 export type WindowCloseBehavior = 'ask' | 'tray' | 'quit'
@@ -104,7 +105,8 @@ const DEFAULT_EXPORT_MEDIA_CONFIG: ExportDefaultMediaConfig = {
   images: true,
   videos: true,
   voices: true,
-  emojis: true
+  emojis: true,
+  files: true
 }
 
 // 获取解密密钥
@@ -423,7 +425,8 @@ export async function getExportDefaultMedia(): Promise<ExportDefaultMediaConfig 
       images: value,
       videos: value,
       voices: value,
-      emojis: value
+      emojis: value,
+      files: value
     }
   }
   if (value && typeof value === 'object') {
@@ -432,7 +435,8 @@ export async function getExportDefaultMedia(): Promise<ExportDefaultMediaConfig 
       images: typeof raw.images === 'boolean' ? raw.images : DEFAULT_EXPORT_MEDIA_CONFIG.images,
       videos: typeof raw.videos === 'boolean' ? raw.videos : DEFAULT_EXPORT_MEDIA_CONFIG.videos,
       voices: typeof raw.voices === 'boolean' ? raw.voices : DEFAULT_EXPORT_MEDIA_CONFIG.voices,
-      emojis: typeof raw.emojis === 'boolean' ? raw.emojis : DEFAULT_EXPORT_MEDIA_CONFIG.emojis
+      emojis: typeof raw.emojis === 'boolean' ? raw.emojis : DEFAULT_EXPORT_MEDIA_CONFIG.emojis,
+      files: typeof raw.files === 'boolean' ? raw.files : DEFAULT_EXPORT_MEDIA_CONFIG.files
     }
   }
   return null
@@ -444,7 +448,8 @@ export async function setExportDefaultMedia(media: ExportDefaultMediaConfig): Pr
     images: media.images,
     videos: media.videos,
     voices: media.voices,
-    emojis: media.emojis
+    emojis: media.emojis,
+    files: media.files
   })
 }
 

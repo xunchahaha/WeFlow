@@ -75,6 +75,7 @@ export interface Message {
   fileName?: string         // 文件名
   fileSize?: number         // 文件大小
   fileExt?: string          // 文件扩展名
+  fileMd5?: string          // 文件 MD5
   xmlType?: string          // XML 中的 type 字段
   appMsgKind?: string       // 归一化 appmsg 类型
   appMsgDesc?: string
@@ -3818,6 +3819,7 @@ class ChatService {
       let fileName: string | undefined
       let fileSize: number | undefined
       let fileExt: string | undefined
+      let fileMd5: string | undefined
       let xmlType: string | undefined
       let appMsgKind: string | undefined
       let appMsgDesc: string | undefined
@@ -3922,6 +3924,7 @@ class ChatService {
         fileName = type49Info.fileName
         fileSize = type49Info.fileSize
         fileExt = type49Info.fileExt
+        fileMd5 = type49Info.fileMd5
         chatRecordTitle = type49Info.chatRecordTitle
         chatRecordList = type49Info.chatRecordList
         transferPayerUsername = type49Info.transferPayerUsername
@@ -3945,6 +3948,7 @@ class ChatService {
         fileName = fileName || type49Info.fileName
         fileSize = fileSize ?? type49Info.fileSize
         fileExt = fileExt || type49Info.fileExt
+        fileMd5 = fileMd5 || type49Info.fileMd5
         appMsgKind = appMsgKind || type49Info.appMsgKind
         appMsgDesc = appMsgDesc || type49Info.appMsgDesc
         appMsgAppName = appMsgAppName || type49Info.appMsgAppName
@@ -4018,6 +4022,7 @@ class ChatService {
         fileName,
         fileSize,
         fileExt,
+        fileMd5,
         xmlType,
         appMsgKind,
         appMsgDesc,
@@ -4610,6 +4615,7 @@ class ChatService {
     fileName?: string
     fileSize?: number
     fileExt?: string
+    fileMd5?: string
     transferPayerUsername?: string
     transferReceiverUsername?: string
     chatRecordTitle?: string
@@ -4806,6 +4812,7 @@ class ChatService {
 
           // 提取文件扩展名
           const fileExt = this.extractXmlValue(content, 'fileext')
+          const fileMd5 = this.extractXmlValue(content, 'md5') || this.extractXmlValue(content, 'filemd5')
           if (fileExt) {
             result.fileExt = fileExt
           } else if (result.fileName) {
@@ -4814,6 +4821,9 @@ class ChatService {
             if (match) {
               result.fileExt = match[1]
             }
+          }
+          if (fileMd5) {
+            result.fileMd5 = fileMd5.toLowerCase()
           }
           break
         }

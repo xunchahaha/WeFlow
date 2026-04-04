@@ -98,6 +98,8 @@ export interface ExportOptions {
   exportVoices?: boolean
   exportVideos?: boolean
   exportEmojis?: boolean
+  exportFiles?: boolean
+  maxFileSizeMb?: number
   exportVoiceAsText?: boolean
   excelCompactColumns?: boolean
   txtColumns?: string[]
@@ -121,7 +123,7 @@ const TXT_COLUMN_DEFINITIONS: Array<{ id: string; label: string }> = [
 
 interface MediaExportItem {
   relativePath: string
-  kind: 'image' | 'voice' | 'emoji' | 'video'
+  kind: 'image' | 'voice' | 'emoji' | 'video' | 'file'
   posterDataUrl?: string
 }
 
@@ -136,6 +138,11 @@ interface ExportDisplayProfile {
 
 type MessageCollectMode = 'full' | 'text-fast' | 'media-fast'
 type MediaContentType = 'voice' | 'image' | 'video' | 'emoji'
+interface FileExportCandidate {
+  sourcePath: string
+  matchedBy: 'md5' | 'name'
+  yearMonth?: string
+}
 
 export interface ExportProgress {
   current: number
@@ -844,7 +851,7 @@ class ExportService {
 
   private isMediaExportEnabled(options: ExportOptions): boolean {
     return options.exportMedia === true &&
-      Boolean(options.exportImages || options.exportVoices || options.exportVideos || options.exportEmojis)
+      Boolean(options.exportImages || options.exportVoices || options.exportVideos || options.exportEmojis || options.exportFiles)
   }
 
   private isUnboundedDateRange(dateRange?: { start: number; end: number } | null): boolean {
@@ -882,7 +889,7 @@ class ExportService {
     if (options.exportImages) selected.add(3)
     if (options.exportVoices) selected.add(34)
     if (options.exportVideos) selected.add(43)
-    if (options.exportEmojis) selected.add(47)
+    if (options.exportFiles) selected.add(49)
     return selected
   }
 
@@ -3418,6 +3425,8 @@ class ExportService {
       exportVoices?: boolean
       exportVideos?: boolean
       exportEmojis?: boolean
+      exportFiles?: boolean
+      maxFileSizeMb?: number
       exportVoiceAsText?: boolean
       includeVideoPoster?: boolean
       includeVoiceWithTranscript?: boolean
@@ -3468,6 +3477,16 @@ class ExportService {
         mediaRelativePrefix,
         options.dirCache,
         options.includeVideoPoster === true
+      )
+    }
+
+    if ((localType === 49 || localType === 8589934592049) && options.exportFiles && String(msg?.xmlType || '') === '6') {
+      return this.exportFileAttachment(
+        msg,
+        mediaRootDir,
+        mediaRelativePrefix,
+        options.maxFileSizeMb,
+        options.dirCache
       )
     }
 
@@ -3932,6 +3951,165 @@ class ExportService {
     return tagMatch?.[1]?.toLowerCase()
   }
 
+  private resolveFileAttachmentRoots(): string[] {
+    const dbPath = String(this.configService.get('dbPath') || '').trim()
+    const rawWxid = String(this.configService.get('myWxid') || '').trim()
+    const cleanedWxid = this.cleanAccountDirName(rawWxid)
+    if (!dbPath) return []
+
+    const normalized = dbPath.replace(/[\\/]+$/, '')
+    const roots = new Set<string>()
+    const tryAddRoot = (candidate: string) => {
+      const fileRoot = path.join(candidate, 'msg', 'file')
+      if (fs.existsSync(fileRoot)) {
+        roots.add(fileRoot)
+      }
+    }
+
+    tryAddRoot(normalized)
+    if (rawWxid) tryAddRoot(path.join(normalized, rawWxid))
+    if (cleanedWxid && cleanedWxid !== rawWxid) tryAddRoot(path.join(normalized, cleanedWxid))
+
+    const dbStoragePath =
+      this.resolveDbStoragePathForExport(normalized, cleanedWxid) ||
+      this.resolveDbStoragePathForExport(normalized, rawWxid)
+    if (dbStoragePath) {
+      tryAddRoot(path.dirname(dbStoragePath))
+    }
+
+    return Array.from(roots)
+  }
+
+  private buildPreferredFileYearMonths(createTime?: unknown): string[] {
+    const raw = Number(createTime)
+    if (!Number.isFinite(raw) || raw <= 0) return []
+    const ts = raw > 1e12 ? raw : raw * 1000
+    const date = new Date(ts)
+    if (Number.isNaN(date.getTime())) return []
+    const y = date.getFullYear()
+    const m = String(date.getMonth() + 1).padStart(2, '0')
+    return [`${y}-${m}`]
+  }
+
+  private async verifyFileHash(sourcePath: string, expectedMd5?: string): Promise<boolean> {
+    const normalizedExpected = String(expectedMd5 || '').trim().toLowerCase()
+    if (!normalizedExpected) return true
+    if (!/^[a-f0-9]{32}$/i.test(normalizedExpected)) return true
+    try {
+      const hash = crypto.createHash('md5')
+      await new Promise<void>((resolve, reject) => {
+        const stream = fs.createReadStream(sourcePath)
+        stream.on('data', chunk => hash.update(chunk))
+        stream.on('end', () => resolve())
+        stream.on('error', reject)
+      })
+      return hash.digest('hex').toLowerCase() === normalizedExpected
+    } catch {
+      return false
+    }
+  }
+
+  private async resolveFileAttachmentCandidates(msg: any): Promise<FileExportCandidate[]> {
+    const fileName = String(msg?.fileName || '').trim()
+    if (!fileName) return []
+
+    const roots = this.resolveFileAttachmentRoots()
+    if (roots.length === 0) return []
+
+    const normalizedMd5 = String(msg?.fileMd5 || '').trim().toLowerCase()
+    const preferredMonths = this.buildPreferredFileYearMonths(msg?.createTime)
+    const candidates: FileExportCandidate[] = []
+    const seen = new Set<string>()
+
+    for (const root of roots) {
+      let monthDirs: string[] = []
+      try {
+        monthDirs = fs.readdirSync(root)
+          .filter(entry => /^\d{4}-\d{2}$/.test(entry) && fs.existsSync(path.join(root, entry)))
+          .sort()
+      } catch {
+        continue
+      }
+
+      const orderedMonths = Array.from(new Set([
+        ...preferredMonths,
+        ...monthDirs.slice().reverse()
+      ]))
+
+      for (const month of orderedMonths) {
+        const sourcePath = path.join(root, month, fileName)
+        if (!fs.existsSync(sourcePath)) continue
+        const resolvedPath = path.resolve(sourcePath)
+        if (seen.has(resolvedPath)) continue
+        seen.add(resolvedPath)
+
+        if (normalizedMd5) {
+          const ok = await this.verifyFileHash(resolvedPath, normalizedMd5)
+          if (ok) {
+            candidates.unshift({ sourcePath: resolvedPath, matchedBy: 'md5', yearMonth: month })
+            continue
+          }
+        }
+
+        candidates.push({ sourcePath: resolvedPath, matchedBy: 'name', yearMonth: month })
+      }
+    }
+
+    return candidates
+  }
+
+  private async exportFileAttachment(
+    msg: any,
+    mediaRootDir: string,
+    mediaRelativePrefix: string,
+    maxFileSizeMb?: number,
+    dirCache?: Set<string>
+  ): Promise<MediaExportItem | null> {
+    try {
+      const fileNameRaw = String(msg?.fileName || '').trim()
+      if (!fileNameRaw) return null
+
+      const filesDir = path.join(mediaRootDir, mediaRelativePrefix, 'files')
+      if (!dirCache?.has(filesDir)) {
+        await fs.promises.mkdir(filesDir, { recursive: true })
+        dirCache?.add(filesDir)
+      }
+
+      const candidates = await this.resolveFileAttachmentCandidates(msg)
+      if (candidates.length === 0) return null
+
+      const maxBytes = Number.isFinite(maxFileSizeMb)
+        ? Math.max(0, Math.floor(Number(maxFileSizeMb) * 1024 * 1024))
+        : 0
+
+      const selected = candidates[0]
+      const stat = await fs.promises.stat(selected.sourcePath)
+      if (!stat.isFile()) return null
+      if (maxBytes > 0 && stat.size > maxBytes) return null
+
+      const normalizedMd5 = String(msg?.fileMd5 || '').trim().toLowerCase()
+      if (normalizedMd5 && selected.matchedBy !== 'md5') {
+        const verified = await this.verifyFileHash(selected.sourcePath, normalizedMd5)
+        if (!verified) return null
+      }
+
+      const safeBaseName = path.basename(fileNameRaw).replace(/[\\/:*?"<>|]/g, '_') || 'file'
+      const messageId = String(msg?.localId || Date.now())
+      const destFileName = `${messageId}_${safeBaseName}`
+      const destPath = path.join(filesDir, destFileName)
+      const copied = await this.copyFileOptimized(selected.sourcePath, destPath)
+      if (!copied.success) return null
+
+      this.noteMediaTelemetry({ doneFiles: 1, bytesWritten: stat.size })
+      return {
+        relativePath: path.posix.join(mediaRelativePrefix, 'files', destFileName),
+        kind: 'file'
+      }
+    } catch {
+      return null
+    }
+  }
+
   private extractLocationMeta(content: string, localType: number): {
     locationLat?: number
     locationLng?: number
@@ -3988,7 +4166,7 @@ class ExportService {
     mediaRelativePrefix: string
   } {
     const exportMediaEnabled = options.exportMedia === true &&
-      Boolean(options.exportImages || options.exportVoices || options.exportVideos || options.exportEmojis)
+      Boolean(options.exportImages || options.exportVoices || options.exportVideos || options.exportEmojis || options.exportFiles)
     const outputDir = path.dirname(outputPath)
     const rawWriteLayout = this.configService.get('exportWriteLayout')
     const writeLayout = rawWriteLayout === 'A' || rawWriteLayout === 'B' || rawWriteLayout === 'C'
@@ -4925,7 +5103,8 @@ class ExportService {
           return (t === 3 && options.exportImages) ||   // 图片
             (t === 47 && options.exportEmojis) ||  // 表情
             (t === 43 && options.exportVideos) ||  // 视频
-            (t === 34 && options.exportVoices)  // 语音文件
+            (t === 34 && options.exportVoices) ||  // 语音文件
+            ((t === 49 || t === 8589934592049) && options.exportFiles && String(msg?.xmlType || '') === '6')
         })
         : []
 
@@ -4966,6 +5145,8 @@ class ExportService {
               exportVoices: options.exportVoices,
               exportVideos: options.exportVideos,
               exportEmojis: options.exportEmojis,
+              exportFiles: options.exportFiles,
+              maxFileSizeMb: options.maxFileSizeMb,
               exportVoiceAsText: options.exportVoiceAsText,
               includeVideoPoster: options.format === 'html',
               imageDeepSearchOnMiss: options.imageDeepSearchOnMiss,
@@ -5434,7 +5615,8 @@ class ExportService {
           return (t === 3 && options.exportImages) ||
             (t === 47 && options.exportEmojis) ||
             (t === 43 && options.exportVideos) ||
-            (t === 34 && options.exportVoices)
+            (t === 34 && options.exportVoices) ||
+            ((t === 49 || t === 8589934592049) && options.exportFiles && String(msg?.xmlType || '') === '6')
         })
         : []
 
@@ -5474,6 +5656,8 @@ class ExportService {
               exportVoices: options.exportVoices,
               exportVideos: options.exportVideos,
               exportEmojis: options.exportEmojis,
+              exportFiles: options.exportFiles,
+              maxFileSizeMb: options.maxFileSizeMb,
               exportVoiceAsText: options.exportVoiceAsText,
               includeVideoPoster: options.format === 'html',
               imageDeepSearchOnMiss: options.imageDeepSearchOnMiss,
@@ -6294,7 +6478,8 @@ class ExportService {
           return (t === 3 && options.exportImages) ||
             (t === 47 && options.exportEmojis) ||
             (t === 43 && options.exportVideos) ||
-            (t === 34 && options.exportVoices)
+            (t === 34 && options.exportVoices) ||
+            ((t === 49 || t === 8589934592049) && options.exportFiles && String(msg?.xmlType || '') === '6')
         })
         : []
 
@@ -6334,6 +6519,8 @@ class ExportService {
               exportVoices: options.exportVoices,
               exportVideos: options.exportVideos,
               exportEmojis: options.exportEmojis,
+              exportFiles: options.exportFiles,
+              maxFileSizeMb: options.maxFileSizeMb,
               exportVoiceAsText: options.exportVoiceAsText,
               includeVideoPoster: options.format === 'html',
               imageDeepSearchOnMiss: options.imageDeepSearchOnMiss,
@@ -7007,7 +7194,8 @@ class ExportService {
           return (t === 3 && options.exportImages) ||
             (t === 47 && options.exportEmojis) ||
             (t === 43 && options.exportVideos) ||
-            (t === 34 && options.exportVoices)
+            (t === 34 && options.exportVoices) ||
+            ((t === 49 || t === 8589934592049) && options.exportFiles && String(msg?.xmlType || '') === '6')
         })
         : []
 
@@ -7047,6 +7235,8 @@ class ExportService {
               exportVoices: options.exportVoices,
               exportVideos: options.exportVideos,
               exportEmojis: options.exportEmojis,
+              exportFiles: options.exportFiles,
+              maxFileSizeMb: options.maxFileSizeMb,
               exportVoiceAsText: options.exportVoiceAsText,
               includeVideoPoster: options.format === 'html',
               imageDeepSearchOnMiss: options.imageDeepSearchOnMiss,
@@ -7384,7 +7574,8 @@ class ExportService {
           return (t === 3 && options.exportImages) ||
             (t === 47 && options.exportEmojis) ||
             (t === 43 && options.exportVideos) ||
-            (t === 34 && options.exportVoices)
+            (t === 34 && options.exportVoices) ||
+            ((t === 49 || t === 8589934592049) && options.exportFiles && String(msg?.xmlType || '') === '6')
         })
         : []
 
@@ -7424,6 +7615,8 @@ class ExportService {
               exportVoices: options.exportVoices,
               exportVideos: options.exportVideos,
               exportEmojis: options.exportEmojis,
+              exportFiles: options.exportFiles,
+              maxFileSizeMb: options.maxFileSizeMb,
               exportVoiceAsText: options.exportVoiceAsText,
               includeVideoPoster: options.format === 'html',
               imageDeepSearchOnMiss: options.imageDeepSearchOnMiss,
@@ -7844,6 +8037,8 @@ class ExportService {
               exportImages: options.exportImages,
               exportVoices: options.exportVoices,
               exportEmojis: options.exportEmojis,
+              exportFiles: options.exportFiles,
+              maxFileSizeMb: options.maxFileSizeMb,
               exportVoiceAsText: options.exportVoiceAsText,
               includeVideoPoster: options.format === 'html',
               includeVoiceWithTranscript: true,

@@ -67,7 +67,7 @@ import './ExportPage.scss'
 type ConversationTab = 'private' | 'group' | 'official' | 'former_friend'
 type TaskStatus = 'queued' | 'running' | 'success' | 'error'
 type TaskScope = 'single' | 'multi' | 'content' | 'sns'
-type ContentType = 'text' | 'voice' | 'image' | 'video' | 'emoji'
+type ContentType = 'text' | 'voice' | 'image' | 'video' | 'emoji' | 'file'
 type ContentCardType = ContentType | 'sns'
 type SnsRankMode = 'likes' | 'comments'
 
@@ -88,6 +88,8 @@ interface ExportOptions {
   exportVoices: boolean
   exportVideos: boolean
   exportEmojis: boolean
+  exportFiles: boolean
+  maxFileSizeMb: number
   exportVoiceAsText: boolean
   excelCompactColumns: boolean
   txtColumns: string[]
@@ -196,7 +198,8 @@ const contentTypeLabels: Record<ContentType, string> = {
   voice: '语音',
   image: '图片',
   video: '视频',
-  emoji: '表情包'
+  emoji: '表情包',
+  file: '文件'
 }
 
 const backgroundTaskSourceLabels: Record<string, string> = {
@@ -1617,7 +1620,8 @@ function ExportPage() {
     images: true,
     videos: true,
     voices: true,
-    emojis: true
+    emojis: true,
+    files: true
   })
   const [exportDefaultVoiceAsText, setExportDefaultVoiceAsText] = useState(false)
   const [exportDefaultExcelCompactColumns, setExportDefaultExcelCompactColumns] = useState(true)
@@ -1636,7 +1640,9 @@ function ExportPage() {
     exportImages: true,
     exportVoices: true,
     exportVideos: true,
-        exportEmojis: true,
+    exportEmojis: true,
+    exportFiles: true,
+    maxFileSizeMb: 200,
     exportVoiceAsText: false,
     excelCompactColumns: true,
     txtColumns: defaultTxtColumns,
@@ -2300,7 +2306,8 @@ function ExportPage() {
         images: true,
         videos: true,
         voices: true,
-        emojis: true
+        emojis: true,
+        files: true
       })
       setExportDefaultVoiceAsText(savedVoiceAsText ?? false)
       setExportDefaultExcelCompactColumns(savedExcelCompactColumns ?? true)
@@ -2329,12 +2336,14 @@ function ExportPage() {
           (savedMedia?.images ?? prev.exportImages) ||
           (savedMedia?.voices ?? prev.exportVoices) ||
           (savedMedia?.videos ?? prev.exportVideos) ||
-          (savedMedia?.emojis ?? prev.exportEmojis)
+          (savedMedia?.emojis ?? prev.exportEmojis) ||
+          (savedMedia?.files ?? prev.exportFiles)
         ),
         exportImages: savedMedia?.images ?? prev.exportImages,
         exportVoices: savedMedia?.voices ?? prev.exportVoices,
         exportVideos: savedMedia?.videos ?? prev.exportVideos,
         exportEmojis: savedMedia?.emojis ?? prev.exportEmojis,
+        exportFiles: savedMedia?.files ?? prev.exportFiles,
         exportVoiceAsText: savedVoiceAsText ?? prev.exportVoiceAsText,
         excelCompactColumns: savedExcelCompactColumns ?? prev.excelCompactColumns,
         txtColumns,
@@ -4107,12 +4116,15 @@ function ExportPage() {
           exportDefaultMedia.images ||
           exportDefaultMedia.voices ||
           exportDefaultMedia.videos ||
-          exportDefaultMedia.emojis
+          exportDefaultMedia.emojis ||
+          exportDefaultMedia.files
         ),
         exportImages: exportDefaultMedia.images,
         exportVoices: exportDefaultMedia.voices,
         exportVideos: exportDefaultMedia.videos,
         exportEmojis: exportDefaultMedia.emojis,
+        exportFiles: exportDefaultMedia.files,
+        maxFileSizeMb: prev.maxFileSizeMb,
         exportVoiceAsText: exportDefaultVoiceAsText,
         excelCompactColumns: exportDefaultExcelCompactColumns,
         exportConcurrency: exportDefaultConcurrency,
@@ -4130,12 +4142,14 @@ function ExportPage() {
           next.exportVoices = false
           next.exportVideos = false
           next.exportEmojis = false
+          next.exportFiles = false
         } else {
           next.exportMedia = true
           next.exportImages = payload.contentType === 'image'
           next.exportVoices = payload.contentType === 'voice'
           next.exportVideos = payload.contentType === 'video'
           next.exportEmojis = payload.contentType === 'emoji'
+          next.exportFiles = payload.contentType === 'file'
           next.exportVoiceAsText = false
         }
       }
@@ -4354,7 +4368,13 @@ function ExportPage() {
 
   const buildExportOptions = (scope: TaskScope, contentType?: ContentType): ElectronExportOptions => {
     const sessionLayout: SessionLayout = writeLayout === 'C' ? 'per-session' : 'shared'
-    const exportMediaEnabled = Boolean(options.exportImages || options.exportVoices || options.exportVideos || options.exportEmojis)
+    const exportMediaEnabled = Boolean(
+      options.exportImages ||
+      options.exportVoices ||
+      options.exportVideos ||
+      options.exportEmojis ||
+      options.exportFiles
+    )
 
     const base: ElectronExportOptions = {
       format: options.format,
@@ -4364,6 +4384,8 @@ function ExportPage() {
       exportVoices: options.exportVoices,
       exportVideos: options.exportVideos,
       exportEmojis: options.exportEmojis,
+      exportFiles: options.exportFiles,
+      maxFileSizeMb: options.maxFileSizeMb,
       exportVoiceAsText: options.exportVoiceAsText,
       excelCompactColumns: options.excelCompactColumns,
       txtColumns: options.txtColumns,
@@ -4394,7 +4416,8 @@ function ExportPage() {
           exportImages: false,
           exportVoices: false,
           exportVideos: false,
-          exportEmojis: false
+          exportEmojis: false,
+          exportFiles: false
         }
       }
 
@@ -4406,6 +4429,7 @@ function ExportPage() {
         exportVoices: contentType === 'voice',
         exportVideos: contentType === 'video',
         exportEmojis: contentType === 'emoji',
+        exportFiles: contentType === 'file',
         exportVoiceAsText: false
       }
     }
@@ -4471,6 +4495,7 @@ function ExportPage() {
       if (opts.exportVoices) labels.push('语音')
       if (opts.exportVideos) labels.push('视频')
       if (opts.exportEmojis) labels.push('表情包')
+      if (opts.exportFiles) labels.push('文件')
     }
     return Array.from(new Set(labels)).join('、')
   }, [])
@@ -4526,6 +4551,7 @@ function ExportPage() {
       if (opts.exportImages) types.push('image')
       if (opts.exportVideos) types.push('video')
       if (opts.exportEmojis) types.push('emoji')
+      if (opts.exportFiles) types.push('file')
     }
     return types
   }
@@ -4956,7 +4982,8 @@ function ExportPage() {
       images: options.exportImages,
       voices: options.exportVoices,
       videos: options.exportVideos,
-      emojis: options.exportEmojis
+      emojis: options.exportEmojis,
+      files: options.exportFiles
     })
     await configService.setExportDefaultVoiceAsText(options.exportVoiceAsText)
     await configService.setExportDefaultExcelCompactColumns(options.excelCompactColumns)
@@ -6974,11 +7001,12 @@ function ExportPage() {
       setExportDefaultMedia(mediaPatch)
       setOptions(prev => ({
         ...prev,
-        exportMedia: Boolean(mediaPatch.images || mediaPatch.voices || mediaPatch.videos || mediaPatch.emojis),
+        exportMedia: Boolean(mediaPatch.images || mediaPatch.voices || mediaPatch.videos || mediaPatch.emojis || mediaPatch.files),
         exportImages: mediaPatch.images,
         exportVoices: mediaPatch.voices,
         exportVideos: mediaPatch.videos,
-        exportEmojis: mediaPatch.emojis
+        exportEmojis: mediaPatch.emojis,
+        exportFiles: mediaPatch.files
       }))
     }
     if (typeof patch.voiceAsText === 'boolean') {
@@ -8178,12 +8206,33 @@ function ExportPage() {
                         <label><input type="checkbox" checked={options.exportVoices} onChange={event => setOptions(prev => ({ ...prev, exportVoices: event.target.checked }))} /> 语音</label>
                         <label><input type="checkbox" checked={options.exportVideos} onChange={event => setOptions(prev => ({ ...prev, exportVideos: event.target.checked }))} /> 视频</label>
                         <label><input type="checkbox" checked={options.exportEmojis} onChange={event => setOptions(prev => ({ ...prev, exportEmojis: event.target.checked }))} /> 表情包</label>
+                        <label><input type="checkbox" checked={options.exportFiles} onChange={event => setOptions(prev => ({ ...prev, exportFiles: event.target.checked }))} /> 文件</label>
                       </>
                     )}
                   </div>
-                  {exportDialog.scope === 'sns' && (
-                    <div className="format-note">全不勾选时仅导出文本信息，不导出媒体文件。</div>
+                  {exportDialog.scope !== 'sns' && options.exportFiles && (
+                    <div className="format-note">文件导出会优先使用消息里的 MD5 做校验；若设置了大小上限，则仅导出不超过该值的文件。</div>
                   )}
+                </div>
+              )}
+
+              {shouldShowMediaSection && exportDialog.scope !== 'sns' && options.exportFiles && (
+                <div className="dialog-section">
+                  <h4>文件大小上限</h4>
+                  <div className="format-note">仅导出不超过该大小的文件，0 表示不限制。</div>
+                  <div className="dialog-input-row">
+                    <input
+                      type="number"
+                      min={0}
+                      step={10}
+                      value={options.maxFileSizeMb}
+                      onChange={event => {
+                        const raw = Number(event.target.value)
+                        setOptions(prev => ({ ...prev, maxFileSizeMb: Number.isFinite(raw) ? Math.max(0, Math.floor(raw)) : 0 }))
+                      }}
+                    />
+                    <span>MB</span>
+                  </div>
                 </div>
               )}
 
