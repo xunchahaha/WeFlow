@@ -18,10 +18,9 @@ import http from 'http'
 import fs from 'fs'
 import path from 'path'
 import { URL } from 'url'
-import { app } from 'electron'
+import { app, Notification } from 'electron'
 import { ConfigService } from './config'
 import { chatService, ChatSession, Message } from './chatService'
-import { showNotification } from '../windows/notificationWindow'
 
 // ─── 常量 ────────────────────────────────────────────────────────────────────
 
@@ -666,12 +665,18 @@ class InsightService {
       const insight = result.slice(0, 120)
 
       insightLog('INFO', `推送通知 → ${displayName}: ${insight}`)
-      await showNotification({
-        sessionId,
-        sourceName: `见解 · ${displayName}`,
-        content: insight,
-        isInsight: true
-      })
+
+      // 使用 Electron 原生系统通知，确保 Windows 右下角弹窗可靠显示
+      if (Notification.isSupported()) {
+        const notif = new Notification({
+          title: `见解 · ${displayName}`,
+          body: insight,
+          silent: false
+        })
+        notif.show()
+      } else {
+        insightLog('WARN', '当前系统不支持原生通知')
+      }
 
       insightLog('INFO', `已为 ${displayName} 推送见解`)
     } catch (e) {
