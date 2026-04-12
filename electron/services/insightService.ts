@@ -401,17 +401,17 @@ class InsightService {
     try {
       const endpoint = buildApiUrl(apiBaseUrl, '/chat/completions')
       const requestMessages = [{ role: 'user', content: '请回复"连接成功"四个字。' }]
-      insightDebugSection('INFO', 'AI 测试连接请求', {
-        endpoint,
-        model,
-        request: {
-          model,
-          messages: requestMessages,
-          max_tokens: API_MAX_TOKENS,
-          temperature: API_TEMPERATURE,
-          stream: false
-        }
-      })
+      insightDebugSection(
+        'INFO',
+        'AI 测试连接请求',
+        [
+          `Endpoint: ${endpoint}`,
+          `Model: ${model}`,
+          '',
+          '用户提示词：',
+          requestMessages[0].content
+        ].join('\n')
+      )
 
       const result = await callApi(
         apiBaseUrl,
@@ -423,10 +423,11 @@ class InsightService {
       insightDebugSection('INFO', 'AI 测试连接输出原文', result)
       return { success: true, message: `连接成功，模型回复：${result.slice(0, 50)}` }
     } catch (e) {
-      insightDebugSection('ERROR', 'AI 测试连接失败', {
-        error: (e as Error).message,
-        stack: (e as Error).stack ?? null
-      })
+      insightDebugSection(
+        'ERROR',
+        'AI 测试连接失败',
+        `错误信息：${(e as Error).message}\n\n堆栈：\n${(e as Error).stack || '[无堆栈]'}`
+      )
       return { success: false, message: `连接失败：${(e as Error).message}` }
     }
   }
@@ -602,6 +603,105 @@ ${topMentionText}
     ).trim() || 'gpt-4o-mini'
 
     return { apiBaseUrl, apiKey, model }
+  }
+
+  private looksLikeWxid(text: string): boolean {
+    const normalized = String(text || '').trim()
+    if (!normalized) return false
+    return /^wxid_[a-z0-9]+$/i.test(normalized)
+      || /^[a-z0-9_]+@chatroom$/i.test(normalized)
+  }
+
+  private looksLikeXmlPayload(text: string): boolean {
+    const normalized = String(text || '').trim()
+    if (!normalized) return false
+    return /^(<\?xml|<msg\b|<appmsg\b|<img\b|<emoji\b|<voip\b|<sysmsg\b|&lt;\?xml|&lt;msg\b|&lt;appmsg\b)/i.test(normalized)
+  }
+
+  private normalizeInsightText(text: string): string {
+    return String(text || '')
+      .replace(/\r\n/g, '\n')
+      .replace(/\u0000/g, '')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim()
+  }
+
+  private formatInsightMessageTimestamp(createTime: number): string {
+    const ms = createTime > 1_000_000_000_000 ? createTime : createTime * 1000
+    const date = new Date(ms)
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    const hours = String(date.getHours()).padStart(2, '0')
+    const minutes = String(date.getMinutes()).padStart(2, '0')
+    const seconds = String(date.getSeconds()).padStart(2, '0')
+    return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`
+  }
+
+  private async resolveInsightSessionDisplayName(sessionId: string, fallbackDisplayName: string): Promise<string> {
+    const fallback = String(fallbackDisplayName || '').trim()
+    if (fallback && !this.looksLikeWxid(fallback)) {
+      return fallback
+    }
+
+    try {
+      const sessions = await this.getSessionsCached()
+      const matched = sessions.find((session) => String(session.username || '').trim() === sessionId)
+      const cachedDisplayName = String(matched?.displayName || '').trim()
+      if (cachedDisplayName && !this.looksLikeWxid(cachedDisplayName)) {
+        return cachedDisplayName
+      }
+    } catch {
+      // ignore display name lookup failures
+    }
+
+    try {
+      const contact = await chatService.getContactAvatar(sessionId)
+      const contactDisplayName = String(contact?.displayName || '').trim()
+      if (contactDisplayName && !this.looksLikeWxid(contactDisplayName)) {
+        return contactDisplayName
+      }
+    } catch {
+      // ignore display name lookup failures
+    }
+
+    return fallback || sessionId
+  }
+
+  private formatInsightMessageContent(message: Message): string {
+    const parsedContent = this.normalizeInsightText(String(message.parsedContent || ''))
+    const quotedPreview = this.normalizeInsightText(String(message.quotedContent || ''))
+    const quotedSender = this.normalizeInsightText(String(message.quotedSender || ''))
+
+    if (quotedPreview) {
+      const cleanQuotedSender = quotedSender && !this.looksLikeWxid(quotedSender) ? quotedSender : ''
+      const quoteLabel = cleanQuotedSender ? `${cleanQuotedSender}：${quotedPreview}` : quotedPreview
+      const replyText = parsedContent && parsedContent !== '[引用消息]' ? parsedContent : ''
+      return replyText ? `${replyText}[引用 ${quoteLabel}]` : `[引用 ${quoteLabel}]`
+    }
+
+    if (parsedContent) {
+      return parsedContent
+    }
+
+    const rawContent = this.normalizeInsightText(String(message.rawContent || ''))
+    if (rawContent && !this.looksLikeXmlPayload(rawContent)) {
+      return rawContent
+    }
+
+    return '[其他消息]'
+  }
+
+  private buildInsightContextSection(messages: Message[], peerDisplayName: string): string {
+    if (!messages.length) return ''
+
+    const lines = messages.map((message) => {
+      const senderName = message.isSend === 1 ? '我' : peerDisplayName
+      const content = this.formatInsightMessageContent(message)
+      return `${this.formatInsightMessageTimestamp(message.createTime)} '${senderName}'\n${content}`
+    })
+
+    return `近期聊天记录（最近 ${lines.length} 条）：\n\n${lines.join('\n\n')}`
   }
 
   /**
@@ -899,6 +999,7 @@ ${topMentionText}
     const { apiBaseUrl, apiKey, model } = this.getSharedAiModelConfig()
     const allowContext = this.config.get('aiInsightAllowContext') as boolean
     const contextCount = (this.config.get('aiInsightContextCount') as number) || 40
+    const resolvedDisplayName = await this.resolveInsightSessionDisplayName(sessionId, displayName)
 
     insightLog('INFO', `generateInsightForSession: sessionId=${sessionId}, reason=${triggerReason}, contextCount=${contextCount}, api=${apiBaseUrl ? '已配置' : '未配置'}`)
 
@@ -919,14 +1020,8 @@ ${topMentionText}
         const msgsResult = await chatService.getLatestMessages(sessionId, contextCount)
         if (msgsResult.success && msgsResult.messages && msgsResult.messages.length > 0) {
           const messages: Message[] = msgsResult.messages
-          const msgLines = messages.map((m) => {
-            const sender = m.isSend === 1 ? '我' : (displayName || sessionId)
-            const content = m.rawContent || m.parsedContent || '[非文字消息]'
-            const time = new Date(Number(m.createTime) * 1000).toLocaleString('zh-CN')
-            return `[${time}] ${sender}：${content}`
-          })
-          contextSection = `\n\n近期对话记录（最近 ${msgLines.length} 条）：\n${msgLines.join('\n')}`
-          insightLog('INFO', `已加载 ${msgLines.length} 条上下文消息`)
+          contextSection = this.buildInsightContextSection(messages, resolvedDisplayName)
+          insightLog('INFO', `已加载 ${messages.length} 条上下文消息`)
         }
       } catch (e) {
         insightLog('WARN', `拉取上下文失败: ${(e as Error).message}`)
@@ -950,20 +1045,23 @@ ${topMentionText}
     // 这样 provider 端（Anthropic/OpenAI）能最大化命中 prompt cache，降低费用
     const triggerDesc =
       triggerReason === 'silence'
-        ? `你已经 ${silentDays} 天没有和「${displayName}」聊天了。`
-        : `你最近和「${displayName}」有新的聊天动态。`
+        ? `你已经 ${silentDays} 天没有和「${resolvedDisplayName}」聊天了。`
+        : `你最近和「${resolvedDisplayName}」有新的聊天动态。`
 
     const todayStatsDesc =
       sessionTriggerTimes.length > 1
-        ? `今天你已经针对「${displayName}」收到过 ${sessionTriggerTimes.length - 1} 条见解（时间：${sessionTriggerTimes.slice(0, -1).join('、')}），请适当克制。`
-        : `今天你还没有针对「${displayName}」发出过见解。`
+        ? `今天你已经针对「${resolvedDisplayName}」收到过 ${sessionTriggerTimes.length - 1} 条见解（时间：${sessionTriggerTimes.slice(0, -1).join('、')}），请适当克制。`
+        : `今天你还没有针对「${resolvedDisplayName}」发出过见解。`
 
     const globalStatsDesc = `今天全部联系人合计已触发 ${totalTodayTriggers} 条见解。`
 
-    const userPrompt = `触发原因：${triggerDesc}
-时间统计：${todayStatsDesc} ${globalStatsDesc}${contextSection}
-
-请给出你的见解（≤80字）：`
+    const userPrompt = [
+      `触发原因：${triggerDesc}`,
+      `时间统计：${todayStatsDesc}`,
+      `全局统计：${globalStatsDesc}`,
+      contextSection,
+      '请给出你的见解（≤80字）：'
+    ].filter(Boolean).join('\n\n')
 
     const endpoint = buildApiUrl(apiBaseUrl, '/chat/completions')
     const requestMessages = [
@@ -972,23 +1070,23 @@ ${topMentionText}
     ]
 
     insightLog('INFO', `准备调用 API: ${endpoint}，模型: ${model}`)
-    insightDebugSection('INFO', `AI 请求 ${displayName} (${sessionId})`, {
-      sessionId,
-      displayName,
-      triggerReason,
-      silentDays: silentDays ?? null,
-      endpoint,
-      model,
-      allowContext,
-      contextCount,
-      request: {
-        model,
-        messages: requestMessages,
-        max_tokens: API_MAX_TOKENS,
-        temperature: API_TEMPERATURE,
-        stream: false
-      }
-    })
+    insightDebugSection(
+      'INFO',
+      `AI 请求 ${resolvedDisplayName} (${sessionId})`,
+      [
+        `接口地址：${endpoint}`,
+        `模型：${model}`,
+        `触发原因：${triggerReason}`,
+        `上下文开关：${allowContext ? '开启' : '关闭'}`,
+        `上下文条数：${contextCount}`,
+        '',
+        '系统提示词：',
+        systemPrompt,
+        '',
+        '用户提示词：',
+        userPrompt
+      ].join('\n')
+    )
 
     try {
       const result = await callApi(
@@ -999,19 +1097,19 @@ ${topMentionText}
       )
 
       insightLog('INFO', `API 返回原文: ${result.slice(0, 150)}`)
-      insightDebugSection('INFO', `AI 输出原文 ${displayName} (${sessionId})`, result)
+      insightDebugSection('INFO', `AI 输出原文 ${resolvedDisplayName} (${sessionId})`, result)
 
       // 模型主动选择跳过
       if (result.trim().toUpperCase() === 'SKIP' || result.trim().startsWith('SKIP')) {
-        insightLog('INFO', `模型选择跳过 ${displayName}`)
+        insightLog('INFO', `模型选择跳过 ${resolvedDisplayName}`)
         return
       }
       if (!this.isEnabled()) return
 
       const insight = result.slice(0, 120)
-      const notifTitle = `见解 · ${displayName}`
+      const notifTitle = `见解 · ${resolvedDisplayName}`
 
-      insightLog('INFO', `推送通知 → ${displayName}: ${insight}`)
+      insightLog('INFO', `推送通知 → ${resolvedDisplayName}: ${insight}`)
 
       // 渠道一：Electron 原生系统通知
       if (Notification.isSupported()) {
@@ -1039,16 +1137,14 @@ ${topMentionText}
         }
       }
 
-      insightLog('INFO', `已为 ${displayName} 推送见解`)
+      insightLog('INFO', `已为 ${resolvedDisplayName} 推送见解`)
     } catch (e) {
-      insightDebugSection('ERROR', `AI 请求失败 ${displayName} (${sessionId})`, {
-        sessionId,
-        displayName,
-        triggerReason,
-        error: (e as Error).message,
-        stack: (e as Error).stack ?? null
-      })
-      insightLog('ERROR', `API 调用失败 (${displayName}): ${(e as Error).message}`)
+      insightDebugSection(
+        'ERROR',
+        `AI 请求失败 ${resolvedDisplayName} (${sessionId})`,
+        `错误信息：${(e as Error).message}\n\n堆栈：\n${(e as Error).stack || '[无堆栈]'}`
+      )
+      insightLog('ERROR', `API 调用失败 (${resolvedDisplayName}): ${(e as Error).message}`)
     }
   }
 
