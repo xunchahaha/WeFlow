@@ -98,7 +98,12 @@ export class KeyServiceLinux {
         'xwechat',
         '/opt/wechat/wechat',
         '/usr/bin/wechat',
-        '/opt/apps/com.tencent.wechat/files/wechat'
+        '/usr/local/bin/wechat',
+        '/usr/bin/wechat',
+        '/opt/apps/com.tencent.wechat/files/wechat',
+        '/usr/bin/wechat-bin',
+        '/usr/local/bin/wechat-bin',
+        'com.tencent.wechat'
       ]
 
       for (const binName of wechatBins) {
@@ -152,7 +157,7 @@ export class KeyServiceLinux {
       }
 
       if (!pid) {
-        const err = '未能自动启动微信，或获取PID失败，请查看控制台日志或手动启动并登录。'
+        const err = '未能自动启动微信，或获取PID失败，请查看控制台日志或手动启动微信，看到登录窗口后点击确认。'
         onStatus?.(err, 2)
         return { success: false, error: err }
       }

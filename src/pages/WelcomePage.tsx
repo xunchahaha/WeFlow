@@ -368,7 +368,13 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
         setError('')
         await handleScanWxid(true)
       } else {
-        if (result.error?.includes('未找到微信安装路径') || result.error?.includes('启动微信失败')) {
+        if (
+          result.error?.includes('未找到微信安装路径') ||
+          result.error?.includes('启动微信失败') ||
+          result.error?.includes('未能自动启动微信') ||
+          result.error?.includes('未找到微信进程') ||
+          result.error?.includes('微信进程未运行')
+        ) {
           setIsManualStartPrompt(true)
           setDbKeyStatus('需要手动启动微信')
         } else {
@@ -844,9 +850,9 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
                 <div className="key-actions">
                   {isManualStartPrompt ? (
                     <div className="manual-prompt">
-                      <p>未能自动启动微信，请手动启动并登录</p>
+                      <p>未能自动启动微信，请手动启动微信，看到登录窗口后点击下方确认</p>
                       <button className="btn btn-primary" onClick={handleManualConfirm}>
-                        我已登录，继续
+                        我已看到登录窗口，继续
                       </button>
                     </div>
                   ) : (
