@@ -119,6 +119,7 @@ class HttpService {
   private messagePushEventId = 0
   private readonly messagePushReplayLimit = 1000
   private readonly messagePushReplayTtlMs = 10 * 60 * 1000
+  private messagePushConnectedAt: number = 0
 
   constructor() {
     this.configService = ConfigService.getInstance()
@@ -179,7 +180,7 @@ class HttpService {
   /**
    * 停止 HTTP 服务
    */
-  async stop(): Promise<void> {
+  async   stop(): Promise<void> {
     return new Promise((resolve) => {
       if (this.server) {
         for (const client of this.messagePushClients) {
@@ -189,6 +190,7 @@ class HttpService {
         }
         this.messagePushClients.clear()
         this.messagePushReplayBuffer = []
+        this.messagePushConnectedAt = 0
         if (this.messagePushHeartbeatTimer) {
           clearInterval(this.messagePushHeartbeatTimer)
           this.messagePushHeartbeatTimer = null
@@ -287,10 +289,16 @@ class HttpService {
     }
   }
 
+  getMessagePushConnectedAt(): number {
+    return this.messagePushConnectedAt
+  }
+
   broadcastMessagePush(payload: Record<string, unknown>): void {
     if (!this.running) return
+    // 支持动态事件类型：默认是 message.new，防撤回消息使用 message.revoke
+    const eventType = String(payload.event || 'message.new')
     const eventId = this.nextMessagePushEventId()
-    const eventBody = `id: ${eventId}\nevent: message.new\ndata: ${JSON.stringify(payload)}\n\n`
+    const eventBody = `id: ${eventId}\nevent: ${eventType}\ndata: ${JSON.stringify(payload)}\n\n`
     this.rememberMessagePushEvent(eventId, eventBody)
     if (this.messagePushClients.size === 0) return
 
@@ -513,6 +521,9 @@ class HttpService {
     res.flushHeaders?.()
 
     this.messagePushClients.add(res)
+    if (this.messagePushConnectedAt === 0) {
+      this.messagePushConnectedAt = Math.floor(Date.now() / 1000)
+    }
     res.write(`event: ready\ndata: ${JSON.stringify({ success: true, stream: this.getMessagePushStreamUrl() })}\n\n`)
     this.replayMessagePushEvents(res, this.parseMessagePushLastEventId(req, url))
 

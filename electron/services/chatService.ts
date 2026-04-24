@@ -2423,6 +2423,10 @@ class ChatService {
     return 0
   }
 
+  collectSessionIdsFromPayload(payload: unknown): Set<string> {
+    return this._collectSessionIdsFromPayload(payload)
+  }
+
   private normalizeMessageOrder(messages: Message[]): Message[] {
     if (messages.length < 2) return messages
 
@@ -3819,7 +3823,7 @@ class ChatService {
     this.sessionStatsCacheService.clearScope(this.sessionStatsCacheScope)
   }
 
-  private collectSessionIdsFromPayload(payload: unknown): Set<string> {
+  private _collectSessionIdsFromPayload(payload: unknown): Set<string> {
     const ids = new Set<string>()
     const walk = (value: unknown, keyHint?: string) => {
       if (Array.isArray(value)) {
@@ -3867,9 +3871,9 @@ class ChatService {
     let ids = new Set<string>()
     if (maybeJson) {
       try {
-        ids = this.collectSessionIdsFromPayload(JSON.parse(maybeJson))
+        ids = this._collectSessionIdsFromPayload(JSON.parse(maybeJson))
       } catch {
-        ids = this.collectSessionIdsFromPayload(maybeJson)
+        ids = this._collectSessionIdsFromPayload(maybeJson)
       }
     }
 
