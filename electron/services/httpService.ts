@@ -1545,7 +1545,7 @@ class HttpService {
           talker,
           String(msg.localId),
           msg.createTime || undefined,
-          msg.serverId || undefined
+          this.getMessageServerId(msg) || undefined
         )
         if (result.success && result.data) {
           const fileName = `voice_${msg.localId}.wav`
@@ -1599,9 +1599,11 @@ class HttpService {
   }
 
   private toApiMessage(msg: Message, media?: ApiExportedMedia): Record<string, any> {
+    const serverId = this.getMessageServerId(msg)
+
     return {
       localId: msg.localId,
-      serverId: msg.serverId,
+      serverId: serverId || '0',
       localType: msg.localType,
       createTime: msg.createTime,
       sortSeq: msg.sortSeq,
@@ -1615,6 +1617,27 @@ class HttpService {
       mediaUrl: media ? `http://${this.host}:${this.port}/api/v1/media/${media.relativePath}` : undefined,
       mediaLocalPath: media?.fullPath
     }
+  }
+
+  private getMessageServerId(msg: Message): string {
+    const raw = this.normalizeUnsignedIntToken(msg.serverIdRaw)
+    if (raw && raw !== '0') return raw
+
+    const fallback = this.normalizeUnsignedIntToken(msg.serverId)
+    return fallback && fallback !== '0' ? fallback : ''
+  }
+
+  private normalizeUnsignedIntToken(value: unknown): string {
+    if (value === null || value === undefined) return ''
+    const text = String(value).trim()
+    if (!text) return ''
+    if (/^\d+$/.test(text)) {
+      return text.replace(/^0+(?=\d)/, '')
+    }
+
+    const numeric = Number(value)
+    if (!Number.isFinite(numeric) || numeric <= 0) return ''
+    return String(Math.floor(numeric))
   }
 
   /**
@@ -1881,7 +1904,7 @@ class HttpService {
         timestamp: msg.createTime,
         type: this.mapMessageType(msg.localType, msg),
         content: this.getMessageContent(msg),
-        platformMessageId: msg.serverId ? String(msg.serverId) : undefined,
+        platformMessageId: this.getMessageServerId(msg) || undefined,
         mediaPath: mediaMap.get(msg.localId) ? `http://${this.host}:${this.port}/api/v1/media/${mediaMap.get(msg.localId)!.relativePath}` : undefined
       }
     })

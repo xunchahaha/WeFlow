@@ -4609,6 +4609,7 @@ class ChatService {
       const createTime = this.getRowTimestampSeconds(row, ['create_time', 'createTime', 'msg_time', 'msgTime', 'time'], 0)
       const sortSeq = this.getRowInt(row, ['sort_seq'], createTime > 0 ? createTime * 1000 : 0)
       const localId = this.getRowInt(row, ['local_id'], 0)
+      const serverIdRaw = this.normalizeUnsignedIntegerToken(row.server_id)
       const serverId = this.getRowInt(row, ['server_id'], 0)
       const content = this.decodeMessageContent(row.message_content, row.compress_content)
 
@@ -4635,6 +4636,7 @@ class ChatService {
         }),
         localId,
         serverId,
+        serverIdRaw,
         localType,
         createTime,
         sortSeq,
